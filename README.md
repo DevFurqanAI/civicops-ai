@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
@@ -48,3 +49,7 @@ export default tseslint.config({
   },
 })
 ```
+=======
+# civicops-ai
+CivicOps AI - Inclusive Community Incident Intelligence &amp; Response Coordination Platform
+>>>>>>> ebfabdf47a1ab2efc2a333256a13cbac833b0389
