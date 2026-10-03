@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Required for the map to render correctly later */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+}
