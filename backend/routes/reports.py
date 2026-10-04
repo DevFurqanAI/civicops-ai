@@ -8,7 +8,7 @@ from backend.services.routing_engine import route_to_department
 from backend.services.evidence_engine import calculate_evidence_confidence
 from backend.services.spam_detection import evaluate_spam_risk
 from backend.services.response_planner import generate_response_plan
-from backend.utils.helpers import IDEMPOTENCY_STORE, REPORTS_DB, INCIDENTS_DB
+from backend.services.supabase_client import supabase
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
 
@@ -16,10 +16,13 @@ router = APIRouter(prefix="/api/reports", tags=["Reports"])
 async def create_report(payload: ReportCreate, idempotency_key: str = Header(None, alias="Idempotency-Key")):
     key = idempotency_key or payload.submission_id
     
-    if key in IDEMPOTENCY_STORE:
-        existing = IDEMPOTENCY_STORE[key].copy()
-        existing["idempotent_replay"] = True
-        return existing
+    # Idempotency lookup via Supabase
+    if supabase:
+        existing_res = supabase.table("reports").select("*").eq("submission_id", key).execute()
+        if existing_res.data and len(existing_res.data) > 0:
+            existing = existing_res.data[0]
+            existing["idempotent_replay"] = True
+            return existing
 
     extraction_res = ai_intake_service.call_structured(payload.text, IntakeExtraction)
     
@@ -59,10 +62,7 @@ async def create_report(payload: ReportCreate, idempotency_key: str = Header(Non
         "idempotent_replay": False
     }
 
-    IDEMPOTENCY_STORE[key] = response_obj
-    REPORTS_DB[public_id] = response_obj
-    
-    INCIDENTS_DB[public_id] = {
+    incident_obj = {
         "incident_id": public_id,
         "category": category,
         "title": f"Incident regarding {category.value}",
@@ -79,10 +79,17 @@ async def create_report(payload: ReportCreate, idempotency_key: str = Header(Non
         "reported_urgency": data.reported_urgency
     }
 
+    if supabase:
+        supabase.table("reports").insert(response_obj).execute()
+        supabase.table("incidents").upsert(incident_obj).execute()
+
     return response_obj
 
 @router.get("/{public_id}", response_model=ReportResponse)
 def get_report(public_id: str):
-    if public_id not in REPORTS_DB:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return REPORTS_DB[public_id]
+    if supabase:
+        res = supabase.table("reports").select("*").eq("public_id", public_id).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    raise HTTPException(status_code=404, detail="Report not found")
+    
