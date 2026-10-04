@@ -12,8 +12,9 @@ export default function SessionControls() {
   }
   return <div className="session-controls">
     {auth.loading ? <span role="status">Restoring session...</span> : auth.user ? <>
-      <span>{auth.user.role === 'CITIZEN' ? 'Citizen account' : auth.user.role === 'ADMIN' ? 'Administrator' : 'Operator'}</span>
-      {auth.user.role !== 'CITIZEN' && <Link to="/operator/dashboard" className="session-link">Dashboard</Link>}
+      <span>{{CITIZEN: 'Citizen account', ADMIN: 'Administrator', OPERATOR: 'Operator', DEPARTMENT: 'Department account'}[auth.user.role]}</span>
+      {['OPERATOR', 'ADMIN'].includes(auth.user.role) && <Link to="/operator/dashboard" className="session-link">Dashboard</Link>}
+      {auth.user.role === 'DEPARTMENT' && <Link to="/department/dashboard" className="session-link">Department dashboard</Link>}
       <button disabled={busy} onClick={logout} className="session-link">{busy ? 'Signing out...' : 'Sign out'}</button>
     </> : <Link to="/login" state={{from: location.pathname}} className="session-link">Sign in / account</Link>}
     {error && <span role="alert">{error}</span>}

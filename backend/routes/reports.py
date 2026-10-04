@@ -95,7 +95,7 @@ def tracking_details(public_id: str, repository=Depends(get_reports_repository),
     link = incidents.link_for_report(row["id"])
     incident = incidents.find("incidents", "id", link["incident_id"]) if link else None
     history = incidents.rows("incident_status_history", (("eq", "incident_id", incident["id"]),)) if incident else []
-    own = user is not None and row.get("reporter_id") == user.user_id
+    own = user is not None and user.role == "CITIZEN" and row.get("reporter_id") == user.user_id
     feedback = incidents.rows("resolution_feedback", (("eq", "report_id", row["id"]),
         ("eq", "incident_id", incident["id"]))) if own and incident else []
     return {

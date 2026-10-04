@@ -39,6 +39,10 @@ def signup_for_test(role):
     profile = admin.table('profiles').select('role').eq('id',user.id).execute().data[0]
     check(profile['role'] == 'CITIZEN', 'Signup metadata cannot promote ' + role)
     if role == 'OPERATOR': admin.table('profiles').update({'role':'OPERATOR'}).eq('id',user.id).execute()
+    if role == 'DEPARTMENT':
+        department = admin.table('departments').select('id').eq('department_key','WATER_SUPPLY').eq('is_active',True).execute().data
+        if len(department) != 1: raise RuntimeError('Active WATER_SUPPLY department required')
+        admin.table('profiles').update({'role':'DEPARTMENT','department_id':department[0]['id']}).eq('id',user.id).execute()
     client = create_client(url,key,options=ClientOptions(persist_session=False,auto_refresh_token=False))
     auth_clients.append(client)
     session = client.auth.sign_in_with_password({'email':email,'password':password}).session
@@ -47,6 +51,7 @@ def signup_for_test(role):
 try:
     citizen, citizen_headers, citizen_auth = signup_for_test('CITIZEN')
     operator, operator_headers, _ = signup_for_test('OPERATOR')
+    department_user, department_headers, _ = signup_for_test('DEPARTMENT')
     other, other_headers, _ = signup_for_test('UNRELATED_CITIZEN')
     with TestClient(main.app) as api:
         check(api.get('/api/auth/me').status_code == 401, 'Missing token denied')
@@ -80,12 +85,29 @@ try:
         action('/response-plan',{'action':'MODIFY','response_plan':['Inspect and safely repair test road damage']}, 'Rejected plan revised')
         action('/response-plan',{'action':'APPROVE'}, 'Human response plan approval')
         action('/status',{'status':'ASSIGNED'}, 'Verified to assigned')
-        action('/status',{'status':'IN_PROGRESS'}, 'Approved plan permits in-progress')
+        department_prefix = '/api/department/incidents/' + report['incident_id']
+        check(api.get('/api/incidents',headers=department_headers).status_code == 403, 'Department cannot access operator dashboard')
+        check(api.post(prefix+'/assign',headers=department_headers,json={'department':'ROAD_MAINTENANCE'}).status_code == 403, 'Department cannot reassign')
+        for next_status in ['ACCEPTED','IN_PROGRESS']:
+            version = api.get(department_prefix,headers=department_headers).json()['updated_at']
+            check(api.post(department_prefix+'/status',headers=department_headers,json={
+                'status':next_status,'expected_updated_at':version}).status_code == 200, 'Department transition '+next_status)
+        version = api.get(department_prefix,headers=department_headers).json()['updated_at']
+        check(api.post(department_prefix+'/updates',headers=department_headers,json={
+            'notes':'Private department work update','expected_updated_at':version}).status_code == 200, 'Atomic department update')
+        version = api.get(department_prefix,headers=department_headers).json()['updated_at']
+        check(api.post(department_prefix+'/status',headers=department_headers,json={
+            'status':'RESOLVED_PENDING_VERIFICATION','notes':'Private completion note',
+            'expected_updated_at':version}).status_code == 200, 'Department completion pending verification')
+        check(api.post(department_prefix+'/status',headers=department_headers,json={
+            'status':'RESOLVED'}).status_code == 409, 'Department cannot confirm final resolution')
+        check(api.post('/api/feedback',headers=citizen_headers,json={
+            'public_id':report['public_id'],'incident_id':report['incident_id'],'response':'YES'}).status_code == 409, 'Feedback blocked until operator verification')
         action('/notes',{'notes':'Private live operational note'}, 'Private note persisted')
         action('/status',{'status':'RESOLVED'}, 'Incident resolved with history')
         tracking_path = '/api/reports/'+report['public_id']+'/tracking'
         tracking = api.get(tracking_path,headers=citizen_headers).json()
-        check(len(tracking['history'])==5 and 'Private' not in str(tracking) and operator not in str(tracking), 'Safe real tracking history')
+        check(len(tracking['history'])==7 and 'Private' not in str(tracking) and operator not in str(tracking), 'Safe real tracking history')
         check(api.get(tracking_path,headers=other_headers).status_code==404, 'Unrelated tracking denied')
         body = {'public_id':report['public_id'],'incident_id':report['incident_id'],'response':'NO'}
         check(api.post('/api/feedback',headers=other_headers,json=body).status_code==403, 'Unrelated feedback denied')

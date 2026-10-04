@@ -1,5 +1,7 @@
 import { AuthProvider } from './auth/AuthProvider';
 import { ProtectedOperatorRoute } from './auth/ProtectedOperatorRoute';
+import { ProtectedDepartmentRoute } from './auth/ProtectedDepartmentRoute';
+import DepartmentDashboard from './pages/DepartmentDashboard';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import CitizenReportPage from './pages/CitizenReportPage';
@@ -25,6 +27,7 @@ function App() {
         
         {/* Operator Routes (Protected) */}
         <Route path="/operator/dashboard" element={<ProtectedOperatorRoute><OperationsDashboard /></ProtectedOperatorRoute>} />
+        <Route path="/department/dashboard" element={<ProtectedDepartmentRoute><DepartmentDashboard /></ProtectedDepartmentRoute>} />
       </Routes>
     </AuthProvider>
     </BrowserRouter>

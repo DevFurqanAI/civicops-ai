@@ -22,6 +22,9 @@ class ResponsePlanRequest(VersionedOperation):
 class OperationalNoteRequest(BaseModel):
     notes: str = Field(..., min_length=1, max_length=2000)
 
+class DepartmentNoteRequest(VersionedOperation):
+    notes: str = Field(..., min_length=1, max_length=2000)
+
 class IncidentResponse(BaseModel):
     incident_id: str
     updated_at: str

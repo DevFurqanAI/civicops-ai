@@ -6,7 +6,7 @@ from threading import BoundedSemaphore
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
-from backend.auth import current_user, operator_user, require_report_access
+from backend.auth import current_user, require_report_access, require_department_incident
 from backend.database import get_reports_repository, get_incidents_repository
 from backend.services.evidence import MAX_BYTES, validate_evidence
 
@@ -110,8 +110,13 @@ def list_media(public_id: str, user=Depends(current_user), reports=Depends(get_r
 
 
 @operator_router.get("/{incident_id}/media")
-def incident_media(incident_id: str, user=Depends(operator_user), repository=Depends(get_incidents_repository)):
-    incident = repository.resolve(incident_id)
+def incident_media(incident_id: str, user=Depends(current_user), repository=Depends(get_incidents_repository)):
+    if user.role == "DEPARTMENT":
+        incident = require_department_incident(repository, incident_id, user)
+    elif user.role in {"OPERATOR", "ADMIN"}:
+        incident = repository.resolve(incident_id)
+    else:
+        raise HTTPException(403, "Operational access required")
     if not incident:
         raise HTTPException(404, "Incident not found")
     result = []
@@ -125,7 +130,16 @@ def incident_media(incident_id: str, user=Depends(operator_user), repository=Dep
 @router.get("/{public_id}/media/{media_id}")
 def download_evidence(public_id: str, media_id: UUID, request: Request, user=Depends(current_user),
                    reports=Depends(get_reports_repository), repository=Depends(get_incidents_repository)):
-    report = owned_report(public_id, user, reports)
+    if user.role == "DEPARTMENT":
+        report = reports.by_public_id(public_id)
+        if not report or report.get("archived_at"):
+            raise HTTPException(404, "Evidence not found")
+        link = repository.link_for_report(report["id"])
+        if not link:
+            raise HTTPException(404, "Evidence not found")
+        require_department_incident(repository, link["incident_id"], user)
+    else:
+        report = owned_report(public_id, user, reports)
     row = repository.find("report_media", "id", str(media_id))
     if not row or row["report_id"] != report["id"]:
         raise HTTPException(404, "Evidence not found")

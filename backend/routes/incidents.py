@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.database import get_incidents_repository
 from backend.models.incident import IncidentResponse, StatusUpdateRequest, AssignDepartmentRequest, ResponsePlanRequest, OperationalNoteRequest
 from backend.auth import operator_user
-from backend.services.operations import perform, STATUS_TRANSITIONS
+from backend.services.operations import perform, allowed_statuses
 from backend.services.incident_adapter import incident_response
 
 router = APIRouter(prefix="/api/incidents", tags=["Incidents"])
@@ -33,9 +33,15 @@ def require_incident(repository, identity):
 @router.get("/{incident_id}/actions")
 def available_actions(incident_id: str, repository=Depends(get_incidents_repository), user=Depends(operator_user)):
     incident = require_incident(repository, incident_id)
-    return {"allowed_statuses": [status for status in STATUS_TRANSITIONS.get(incident["status"], ())
-        if not (status == "IN_PROGRESS" and incident["response_plan_status"] != "APPROVED")
-        and not (status == "ASSIGNED" and not incident.get("current_department_id"))]}
+    return {"allowed_statuses": allowed_statuses(incident, user.role)}
+
+@router.get("/{incident_id}/work-history")
+def work_history(incident_id: str, repository=Depends(get_incidents_repository), user=Depends(operator_user)):
+    incident = require_incident(repository, incident_id)
+    rows = repository.rows("audit_logs", (("eq", "incident_id", incident["id"]),))
+    return [{"notes": r["details"]["notes"], "created_at": r["created_at"], "action": r["action"]}
+            for r in sorted(rows, key=lambda r: (r["created_at"], r["id"]))
+            if (r.get("details") or {}).get("role") == "DEPARTMENT" and (r.get("details") or {}).get("notes")]
 
 @router.post("/{incident_id}/status")
 def update_incident_status(incident_id: str, payload: StatusUpdateRequest,

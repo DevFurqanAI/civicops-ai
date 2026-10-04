@@ -14,7 +14,7 @@ def policy_sql():
     return "\n".join(lines)
 
 if __name__ == "__main__":
-    path = Path(__file__).with_name("stage4_operations.sql")
+    path = Path(__file__).with_name("department_portal.sql")
     source = path.read_text(encoding="utf-8")
     start = source.index(START)
     end = source.index(END) + len(END)

@@ -5,7 +5,7 @@ from backend.database import create_backend_client
 from backend.config import validate_production
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routes import reports, incidents, dashboard, auth, feedback, media
+from backend.routes import reports, incidents, dashboard, auth, feedback, media, department
 
 @asynccontextmanager
 async def lifespan(app):
@@ -39,6 +39,7 @@ app.include_router(auth.router)
 app.include_router(feedback.router)
 app.include_router(media.router)
 app.include_router(media.operator_router)
+app.include_router(department.router)
 
 @app.get("/health")
 def health_check():

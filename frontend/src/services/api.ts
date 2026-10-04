@@ -86,6 +86,14 @@ export function createApiClient(baseUrl: string, fetcher: typeof fetch = fetch, 
     }
   }
   return {
+    getDepartmentIncidents: async (signal?: AbortSignal) => (await request<IncidentResponse[]>('/department/incidents', signal)).map(adaptIncident),
+    getDepartmentIncident: async (id: string, signal?: AbortSignal) => adaptIncident(await request<IncidentResponse>(`/department/incidents/${encodeURIComponent(id)}`, signal)),
+    getDepartmentActions: (id: string, signal?: AbortSignal) => request<{allowed_statuses: IncidentStatus[]}>(`/department/incidents/${encodeURIComponent(id)}/actions`, signal),
+    getDepartmentHistory: (id: string, signal?: AbortSignal) => request<TrackingDetails['history']>(`/department/incidents/${encodeURIComponent(id)}/history`, signal),
+    getDepartmentUpdates: (id: string, signal?: AbortSignal) => request<WorkUpdate[]>(`/department/incidents/${encodeURIComponent(id)}/updates`, signal),
+    getWorkHistory: (id: string, signal?: AbortSignal) => request<WorkUpdate[]>(`/incidents/${encodeURIComponent(id)}/work-history`, signal),
+    updateDepartmentStatus: (id: string, status: IncidentStatus, version: string, notes?: string) => request<OperationResult>(`/department/incidents/${encodeURIComponent(id)}/status`, undefined, {status, expected_updated_at: version, notes}),
+    addDepartmentUpdate: (id: string, version: string, notes: string) => request<OperationResult>(`/department/incidents/${encodeURIComponent(id)}/updates`, undefined, {expected_updated_at: version, notes}),
     uploadEvidence: (publicId: string, file: File, uploadId: string) => request<EvidenceItem>(`/reports/${encodeURIComponent(publicId)}/media?upload_id=${encodeURIComponent(uploadId)}&filename=${encodeURIComponent(file.name)}`, undefined, file),
     getEvidence: (publicId: string, signal?: AbortSignal) => request<EvidenceItem[]>(`/reports/${encodeURIComponent(publicId)}/media`, signal),
     getIncidentEvidence: (id: string, signal?: AbortSignal) => request<Array<EvidenceItem & {public_id: string}>>(`/incidents/${encodeURIComponent(id)}/media`, signal),
@@ -105,7 +113,7 @@ export function createApiClient(baseUrl: string, fetcher: typeof fetch = fetch, 
     getDashboardSummary: (signal?: AbortSignal) => request<DashboardSummary>('/dashboard/summary', signal),
   };
 }
-export const {createReport, getReport, getIncidents, getIncident, getDashboardSummary, getCurrentUser, getTrackingDetails, addOperationalNote, getIncidentActions, updateIncidentStatus, assignIncidentDepartment, reviewResponsePlan, submitFeedback, uploadEvidence, getEvidence, getEvidenceContent, getIncidentEvidence} = createApiClient(import.meta.env?.VITE_API_URL || 'http://127.0.0.1:8000');
+export const {createReport, getReport, getIncidents, getIncident, getDashboardSummary, getCurrentUser, getTrackingDetails, addOperationalNote, getIncidentActions, updateIncidentStatus, assignIncidentDepartment, reviewResponsePlan, submitFeedback, uploadEvidence, getEvidence, getEvidenceContent, getIncidentEvidence, getDepartmentIncidents, getDepartmentIncident, getDepartmentActions, getDepartmentHistory, getDepartmentUpdates, getWorkHistory, updateDepartmentStatus, addDepartmentUpdate} = createApiClient(import.meta.env?.VITE_API_URL || 'http://127.0.0.1:8000');
 
 export interface EvidenceItem {media_id: string; media_type: 'IMAGE' | 'AUDIO'; mime_type: string; created_at: string; size_bytes: number}
 
@@ -117,3 +125,4 @@ export interface TrackingDetails {
 }
 
 export interface OperationResult {incident_id: string; updated_at: string}
+export interface WorkUpdate {notes: string; created_at: string; action: string}

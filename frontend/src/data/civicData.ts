@@ -10,7 +10,8 @@ export const departmentLabels = {
   GAS_UTILITY: 'Gas utility', PARKS_HORTICULTURE: 'Parks & horticulture', ANIMAL_CONTROL: 'Animal control', MANUAL_REVIEW: 'Manual review',
 } as const;
 export const statusLabels = {
-  RECEIVED: 'Received', VERIFIED: 'Verified', ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress',
+  RECEIVED: 'Received', VERIFIED: 'Verified', ASSIGNED: 'Assigned', ACCEPTED: 'Accepted', IN_PROGRESS: 'In progress',
+  RESOLVED_PENDING_VERIFICATION: 'Awaiting resolution verification',
   RESOLVED: 'Resolved', REOPENED: 'Reopened', REJECTED: 'Rejected', NEEDS_REVIEW: 'Needs review',
 } as const;
 export type Category = keyof typeof categoryLabels;

@@ -12,7 +12,7 @@ from backend.services.routing_engine import route_to_department
 from backend.services.response_planner import generate_response_plan
 
 METHOD = "TOKEN_SIMILARITY_DISTANCE_TIME_V1"
-ACTIVE_STATUSES = {"RECEIVED", "VERIFIED", "ASSIGNED", "IN_PROGRESS", "REOPENED", "NEEDS_REVIEW"}
+ACTIVE_STATUSES = {"RECEIVED", "VERIFIED", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "RESOLVED_PENDING_VERIFICATION", "REOPENED", "NEEDS_REVIEW"}
 # Generic roads/areas and institution types alone do not identify a particular site.
 GENERIC_LOCATION = {"main", "road", "street", "gali", "sadak", "sarak", "avenue", "school",
                     "market", "park", "near", "outside", "opposite", "front", "the", "at", "of",

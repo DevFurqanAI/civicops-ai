@@ -118,28 +118,41 @@ class DatabaseTransport:
                 db.execute("INSERT OR REPLACE INTO records VALUES (?,?,?)", (table, row["id"], json.dumps(row)))
             profile = get("profiles", p["p_actor_id"])
             feedback = name == "civicops_submit_resolution_feedback"
-            if not profile or profile["role"] not in ({"CITIZEN"} if feedback else {"OPERATOR","ADMIN"}):
+            department_action = profile and profile['role'] == 'DEPARTMENT'
+            allowed_roles = {'CITIZEN'} if feedback else ({'DEPARTMENT'} if name == 'civicops_add_department_work_update' else ({'OPERATOR','ADMIN','DEPARTMENT'} if name == 'civicops_change_incident_status' else {'OPERATOR','ADMIN'}))
+            if not profile or profile['role'] not in allowed_roles:
                 return response("PT403", "Forbidden")
             i = get("incidents", p["p_incident_id"])
             if not i or i.get("archived_at"):
                 return response("PT404", "Missing incident")
+            if department_action:
+                dept = get('departments', profile.get('department_id'))
+                if (not dept or not dept['is_active'] or i.get('current_department_id') != dept['id']
+                    or not any(a['incident_id'] == i['id'] and a['department_id'] == dept['id']
+                        and a.get('completed_at') is None for a in self.rows('incident_assignments'))):
+                    return response('PT403', 'Not assigned department')
             if not feedback:
                 expected = p.get("p_expected_updated_at")
                 if not expected or datetime.fromisoformat(expected.replace("Z", "+00:00")) != datetime.fromisoformat(i["updated_at"].replace("Z", "+00:00")):
                     return response("PT409", "Stale version")
-            audit = {"id": str(uuid4()), "actor_type": "USER" if feedback else profile["role"],
+            audit = {"id": str(uuid4()), "actor_type": "USER" if feedback or department_action else profile["role"],
                      "actor_id": p["p_actor_id"], "incident_id": i["id"], "created_at": now, "details": {}}
             try:
                 if name == "civicops_change_incident_status":
-                    from backend.services.operations import STATUS_TRANSITIONS
+                    from backend.services.operations import allowed_statuses
                     target = p["p_new_status"]
-                    if target not in STATUS_TRANSITIONS[i["status"]] or (target == "IN_PROGRESS" and i["response_plan_status"] != "APPROVED"):
+                    if target not in allowed_statuses(i, profile["role"]):
                         return response("PT409", "Invalid transition")
+                    if (target == 'RESOLVED_PENDING_VERIFICATION' or (i['status'] == 'RESOLVED_PENDING_VERIFICATION' and target == 'REOPENED') or target == 'REJECTED') and not (p.get('p_notes') or '').strip():
+                        return response('PT422', 'Note required')
+                    if target == 'ASSIGNED' and not any(a['incident_id'] == i['id'] and a['department_id'] == i.get('current_department_id') and a.get('completed_at') is None for a in self.rows('incident_assignments')):
+                        return response('PT409', 'Active assignment required')
                     old = i["status"]
                     i["status"] = target
                     if target == "RESOLVED": i["resolved_at"] = now
                     if target == "REOPENED": i["resolved_at"] = None
                     save("incident_status_history", {"id":str(uuid4()), "incident_id":i["id"],"old_status":old,"new_status":target,"notes":p.get("p_notes"),"changed_by":p["p_actor_id"],"created_at":now})
+                    audit['details'] = {'role':profile['role'],'department_id':profile.get('department_id'), 'user_id':p['p_actor_id'], 'notes':p.get('p_notes')}
                     audit["action"] = "INCIDENT_STATUS_CHANGED"
                 elif name == "civicops_assign_incident_department":
                     if i["status"] in {"RESOLVED","REJECTED"}: return response("PT409", "Closed incident")
@@ -150,6 +163,12 @@ class DatabaseTransport:
                     if not department or not department["is_active"]:
                         db.rollback(); return response("PT422", "Invalid department")
                     save("incident_assignments", {"id":str(uuid4()),"incident_id":i["id"],"department_id":department["id"],"assigned_by":p["p_actor_id"],"assigned_at":now,"completed_at":None,"notes":p.get("p_notes")})
+                    if i['status'] in {'ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION','REOPENED'}:
+                        old = i['status']; i['status'] = 'ASSIGNED'
+                        if old != i['status']:
+                            save('incident_status_history', {'id':str(uuid4()), 'incident_id':i['id'], 'old_status':old,'new_status':'ASSIGNED','changed_by':p['p_actor_id'],'created_at':now,'notes':p.get('p_notes')})
+                            save('audit_logs', {'id':str(uuid4()),'actor_type':profile['role'],'actor_id':p['p_actor_id'],'incident_id':i['id'],'action':'INCIDENT_STATUS_CHANGED','created_at':now,'details':{'reason':'department_reassignment'}})
+                    i['resolved_at'] = None
                     i["current_department_id"] = department["id"]
                     audit["action"] = "INCIDENT_DEPARTMENT_ASSIGNED"
                 elif name == "civicops_review_incident_response_plan":
@@ -162,6 +181,11 @@ class DatabaseTransport:
                     i["response_plan_approved_by"] = p["p_actor_id"] if action == "APPROVE" else None
                     i["response_plan_approved_at"] = now if action == "APPROVE" else None
                     audit["action"] = "RESPONSE_PLAN_" + action
+                elif name == 'civicops_add_department_work_update':
+                    if i['status'] not in {'ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION'}:
+                        return response('PT409','Not released')
+                    if not (p.get('p_notes') or '').strip(): return response('PT422','Note required')
+                    audit.update(action='DEPARTMENT_WORK_UPDATE', details={'role':'DEPARTMENT','department_id':profile['department_id'],'user_id':p['p_actor_id'],'notes':p['p_notes']})
                 elif feedback:
                     r = get("reports", p["p_report_id"])
                     links = self.rows("incident_reports")

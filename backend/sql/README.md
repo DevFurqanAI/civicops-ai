@@ -1,5 +1,10 @@
 # Stage 4 transaction functions
 
+Department Portal implementation supersedes the functions below. Apply
+[department_portal.sql](department_portal.sql) once using the
+[activation guide](../../docs/DEPARTMENT_PORTAL.md). Its live application is pending.
+Do not reapply the historical Stage 4 script after the department migration.
+
 Run the **entire exact script** in [`stage4_operations.sql`](stage4_operations.sql)
 in Supabase Dashboard > SQL Editor as the database owner. It is a single
 BEGIN/COMMIT transaction and can be rerun before integration. It creates only

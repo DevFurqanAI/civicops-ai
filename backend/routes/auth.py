@@ -5,4 +5,4 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 @router.get("/me", response_model=CurrentUserResponse)
 def me(user=Depends(current_user)):
-    return {"user_id": user.user_id, "role": user.role}
+    return {"user_id": user.user_id, "role": user.role, "department_id": user.department_id}

@@ -1,10 +1,13 @@
-export type Role = 'CITIZEN' | 'OPERATOR' | 'ADMIN';
-export interface TrustedUser {user_id: string; role: Role}
+export type Role = 'CITIZEN' | 'OPERATOR' | 'ADMIN' | 'DEPARTMENT';
+export interface TrustedUser {user_id: string; role: Role; department_id?: string | null}
 export interface AuthState {loading: boolean; user: TrustedUser | null; error: string}
 let accessToken: string | null = null;
 export const getAccessToken = () => accessToken;
 export function operatorAccess(state: AuthState): 'loading' | 'login' | 'denied' | 'allowed' {
-  return state.loading ? 'loading' : !state.user ? 'login' : state.user.role === 'CITIZEN' ? 'denied' : 'allowed';
+  return state.loading ? 'loading' : !state.user ? 'login' : ['OPERATOR', 'ADMIN'].includes(state.user.role) ? 'allowed' : 'denied';
+}
+export function departmentAccess(state: AuthState): 'loading' | 'login' | 'denied' | 'allowed' {
+  return state.loading ? 'loading' : !state.user ? 'login' : state.user.role === 'DEPARTMENT' && state.user.department_id ? 'allowed' : 'denied';
 }
 export interface SessionDriver {
   restore(): Promise<string | null>;
@@ -27,7 +30,8 @@ export function createSessionController(driver: SessionDriver) {
     try {
       const user = await driver.loadUser();
       if (version !== generation) return null;
-      if (!['CITIZEN', 'OPERATOR', 'ADMIN'].includes(user.role)) throw new Error('Invalid profile');
+      if (!['CITIZEN', 'OPERATOR', 'ADMIN', 'DEPARTMENT'].includes(user.role)
+          || (user.role === 'DEPARTMENT' && !user.department_id)) throw new Error('Invalid profile');
       publish({loading: false, user, error: ''});
       return user;
     } catch {
@@ -57,5 +61,5 @@ export function createSessionController(driver: SessionDriver) {
 
 export function loginDestination(role: Role, from: unknown): string {
   if (typeof from === 'string' && from.startsWith('/track/')) return from;
-  return role === 'CITIZEN' ? '/' : '/operator/dashboard';
+  return ['OPERATOR', 'ADMIN'].includes(role) ? '/operator/dashboard' : role === 'DEPARTMENT' ? '/department/dashboard' : '/';
 }

@@ -95,7 +95,7 @@ class IncidentsRepository:
 
     def candidates(self, category, since, until):
         return self.rows("incidents", (("eq", "category", category), ("is_", "archived_at", "null"),
-            ("in_", "status", ["RECEIVED", "VERIFIED", "ASSIGNED", "IN_PROGRESS", "REOPENED", "NEEDS_REVIEW"]),
+            ("in_", "status", ["RECEIVED", "VERIFIED", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "RESOLVED_PENDING_VERIFICATION", "REOPENED", "NEEDS_REVIEW"]),
             ("gte", "created_at", since), ("lte", "created_at", until)))
 
     def department(self, key):
