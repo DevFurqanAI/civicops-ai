@@ -6,6 +6,9 @@ import 'leaflet/dist/leaflet.css';
 import EmptyState from './EmptyState';
 import type { IncidentView } from '../services/api';
 import { mapFocus, focusMapSelection, createMapResizeHandler } from '../utils/incidentMap';
+import { mapTilerTiles } from '../utils/mapTiles';
+
+const tileSource = mapTilerTiles(import.meta.env.VITE_MAPTILER_API_KEY);
 
 const markerIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -46,10 +49,11 @@ export default function IncidentMap({incidents, selectedId, onSelect, disabled =
   const selectedPosition = markers.find(incident => incident.id === selectedId)?.mapPosition ?? null;
   return <div className="situational-map">
     <div className="map-heading"><h3><MapPin size={16} />Incident locations</h3><span>{markers.length} mapped</span></div>
+    {!tileSource && <p className="field-help" role="status">Basemap unavailable: configure VITE_MAPTILER_API_KEY and rebuild the frontend. Incident lists, details and location markers remain available.</p>}
     {selectedWithoutCoordinates && <p className="field-help" role="status">The selected incident has no coordinates. Its written location remains available in the details.</p>}
     {initialPosition && <div className="map-canvas" hidden={!position}><MapContainer center={initialPosition} zoom={12} style={{height: '100%', width: '100%'}}>
       <FocusLocation position={selectedPosition} />
-      <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      {tileSource && <TileLayer {...tileSource} />}
       {markers.map(incident => <Marker key={incident.id} position={incident.mapPosition!} icon={incident.id === selectedId ? selectedMarkerIcon : markerIcon}
         zIndexOffset={incident.id === selectedId ? 1000 : 0}
         eventHandlers={{click: () => {if (!disabled) onSelect(incident.id);}}}>

@@ -76,6 +76,7 @@ Frontend accepts only public environment variables:
 | VITE_API_URL | Actual Railway HTTPS API origin, without /api suffix |
 | VITE_SUPABASE_URL | Actual Supabase project URL |
 | VITE_SUPABASE_PUBLISHABLE_KEY | sb_publishable_ key only |
+| VITE_MAPTILER_API_KEY | Browser MapTiler Cloud key for Streets raster tiles; restrict allowed origins |
 
 Production builds require all three. There are no hardcoded production URLs.
 Frontend .env.example lists the correct supported variables. Vite rejects server-key
@@ -151,8 +152,16 @@ hosting pipeline before internet exposure; no image vulnerability scan was perfo
 1. Import the same repository and set Root Directory to `frontend`.
 2. Framework: Vite; Node.js: 24.x. Install: `npm ci`; Build: `npm run build`;
    Output Directory: `dist`. frontend/vercel.json supplies SPA rewrites/security headers.
-3. Configure only the three public frontend variables above. VITE_API_URL is the
+3. Configure the four public frontend variables above. VITE_API_URL is the
    backend HTTPS domain; it does not point directly to Supabase protected tables.
+   Set VITE_MAPTILER_API_KEY under Project Settings > Environment Variables for
+   Production and any Preview environments you use. In MapTiler Cloud, authorize
+   the actual Vercel/custom-domain origins (and localhost for development).
+   Redeploy after changing the variable: Vite embeds it at build time. Without it,
+   the map displays a configuration message and makes no raster tile requests.
+   Both dashboards use the shared Leaflet map with the documented 256px Streets
+   raster URL: https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key=<key>.
+   See https://docs.maptiler.com/leaflet/examples/raster-tiles-in-leaflet-js/.
 4. Supabase Dashboard > Authentication > URL Configuration: set Site URL to the
    actual final frontend HTTPS origin. Add exact redirect URLs:
    `<frontend origin>/auth/callback` and `<frontend origin>/auth/reset`.
