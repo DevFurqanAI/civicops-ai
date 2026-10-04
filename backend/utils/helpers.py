@@ -1,3 +1,1 @@
-IDEMPOTENCY_STORE: dict = {}
-REPORTS_DB: dict = {}
-INCIDENTS_DB: dict = {}
+"""Legacy module retained for import compatibility; persistent repositories own data."""

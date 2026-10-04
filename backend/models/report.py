@@ -1,4 +1,5 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
+from datetime import datetime
 from pydantic import BaseModel, Field
 from backend.models.common import CategoryEnum, PriorityEnum, IncidentStatusEnum
 
@@ -19,6 +20,7 @@ class SupportingSignal(BaseModel):
 class ReportResponse(BaseModel):
     public_id: str = Field(..., description="Human-readable ID like CV-1042")
     internal_id: str
+    incident_id: Optional[str] = None
     submission_id: str
     status: IncidentStatusEnum
     ai_status: str
@@ -29,3 +31,22 @@ class ReportResponse(BaseModel):
     supporting_signals: List[SupportingSignal]
     spam_risk: float = Field(..., ge=0.0, le=1.0)
     idempotent_replay: bool = False
+
+
+class TrackingLocation(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    landmark: Optional[str] = None
+
+class TrackingHistoryEntry(BaseModel):
+    old_status: Optional[IncidentStatusEnum] = None
+    new_status: IncidentStatusEnum
+    created_at: datetime
+
+class TrackingDetailsResponse(BaseModel):
+    public_id: str
+    incident_code: Optional[str] = None
+    location: TrackingLocation
+    history: List[TrackingHistoryEntry]
+    can_submit_feedback: bool
+    feedback_response: Optional[Literal["YES", "PARTIALLY", "NO"]] = None

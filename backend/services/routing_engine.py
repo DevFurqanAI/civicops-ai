@@ -4,7 +4,7 @@ def route_to_department(category: CategoryEnum) -> DepartmentEnum:
     mapping = {
         CategoryEnum.SEWERAGE_DRAINAGE: DepartmentEnum.WATER_SANITATION,
         CategoryEnum.WASTE_SANITATION: DepartmentEnum.WASTE_MANAGEMENT,
-        CategoryEnum.WATER_SUPPLY: DepartmentEnum.WATER_SANITATION,
+        CategoryEnum.WATER_SUPPLY: DepartmentEnum.WATER_SUPPLY,
         CategoryEnum.ELECTRICITY: DepartmentEnum.ELECTRICITY_UTILITY,
         CategoryEnum.STREET_LIGHTING: DepartmentEnum.PUBLIC_LIGHTING,
         CategoryEnum.ROAD_DAMAGE: DepartmentEnum.ROAD_MAINTENANCE,

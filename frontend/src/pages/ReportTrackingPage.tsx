@@ -1,128 +1,70 @@
-import { useState } from 'react';
-import { CheckCircle, Clock, MapPin, Tag, ShieldCheck, ThumbsUp, ThumbsDown, MinusCircle, MessageSquare } from 'lucide-react';
+import AppHeader from '../components/AppHeader';
+import EmptyState from '../components/EmptyState';
+import ReportEvidence from '../components/ReportEvidence';
+import { useAuth } from '../auth/useAuth';
+import { statusLabels } from '../data/civicData';
+import { useEffect, useState, useRef } from 'react';
+import { Clock, MapPin, Tag, ShieldCheck, ThumbsUp, ThumbsDown, MinusCircle, MessageSquare, ArrowLeft } from 'lucide-react';
 import { useParams, Link } from 'react-router-dom';
+import { getReport, getTrackingDetails, submitFeedback } from '../services/api';
+import type { ReportView, TrackingDetails } from '../services/api';
 
 export default function ReportTrackingPage() {
   const { id } = useParams();
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  // Mock data - set to "Resolved" to display the feedback UI
-  const report = {
-    id: id || "CV-1042",
-    status: "Resolved", 
-    category: "Security (Theft, Suspicious Activity)",
-    location: "Main Street",
-    timestamp: "Just now"
-  };
-
-  const handleFeedback = (type: string) => {
-    setIsSubmitting(true);
-    setTimeout(() => {
-      setFeedback(type);
-      setIsSubmitting(false);
-    }, 800);
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8 flex items-center justify-center font-sans">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
-        
-        {/* Dynamic Header based on Status */}
-        <div className={`${report.status === 'Resolved' ? 'bg-indigo-600' : 'bg-emerald-500'} px-6 py-8 text-white text-center relative overflow-hidden transition-colors`}>
-          {report.status === 'Resolved' ? (
-            <ShieldCheck size={64} className="mx-auto mb-4 text-indigo-200" />
-          ) : (
-            <CheckCircle size={64} className="mx-auto mb-4 text-emerald-100" />
-          )}
-          <h1 className="text-2xl font-bold tracking-tight">
-            {report.status === 'Resolved' ? 'Incident Resolved' : 'Report Received'}
-          </h1>
-          <p className={`${report.status === 'Resolved' ? 'text-indigo-200' : 'text-emerald-100'} mt-2 text-sm`}>ID: {report.id}</p>
-        </div>
-
-        <div className="p-6 space-y-6">
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-            <div className="flex items-center gap-3 text-slate-700">
-              <Tag size={18} className="text-slate-400" />
-              <span className="text-sm font-medium">{report.category}</span>
-            </div>
-            <div className="flex items-center gap-3 text-slate-700">
-              <MapPin size={18} className="text-slate-400" />
-              <span className="text-sm font-medium">{report.location}</span>
-            </div>
-          </div>
-
-          {/* Status Timeline */}
-          <div className="space-y-4 pt-2">
-            <h3 className="text-sm font-semibold text-slate-700">Current Status</h3>
-            
-            <div className="relative border-l-2 border-emerald-500 ml-3 pl-6 pb-6">
-              <div className="absolute -left-[11px] top-0 bg-emerald-500 rounded-full p-1"><CheckCircle size={14} className="text-white" /></div>
-              <p className="text-sm font-bold text-slate-800">Received & Analyzed</p>
-              <p className="text-xs text-slate-500 mt-1">AI processed your report details.</p>
-            </div>
-
-            <div className="relative border-l-2 border-emerald-500 ml-3 pl-6 pb-6">
-              <div className="absolute -left-[11px] top-0 bg-emerald-500 rounded-full p-1"><Clock size={14} className="text-white" /></div>
-              <p className="text-sm font-bold text-slate-800">Under Review</p>
-              <p className="text-xs text-slate-500 mt-1">Operator verified the incident.</p>
-            </div>
-
-            <div className="relative ml-3 pl-6">
-              <div className="absolute -left-[11px] top-0 bg-indigo-500 rounded-full p-1"><ShieldCheck size={14} className="text-white" /></div>
-              <p className="text-sm font-bold text-indigo-700">Resolved</p>
-              <p className="text-xs text-slate-500 mt-1">Authorities have cleared this incident.</p>
-            </div>
-          </div>
-
-          {/* Resolution Feedback UI (Only shows if Resolved) */}
-          {report.status === 'Resolved' && (
-            <div className="mt-6 border-t border-slate-100 pt-6">
-              {feedback ? (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center animate-in fade-in zoom-in duration-300">
-                  <CheckCircle size={32} className="mx-auto text-emerald-500 mb-2" />
-                  <h4 className="font-bold text-emerald-800">Feedback Submitted</h4>
-                  <p className="text-xs text-emerald-600 mt-1">Thank you for helping us keep CivicOps AI accurate and reliable.</p>
-                </div>
-              ) : (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 relative overflow-hidden">
-                  {isSubmitting && (
-                    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
-                      <svg className="animate-spin h-6 w-6 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    </div>
-                  )}
-                  <h4 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
-                    <MessageSquare size={18} className="text-indigo-500" /> Verification Required
-                  </h4>
-                  <p className="text-sm text-slate-600 mb-4">Are you satisfied that this issue has been completely resolved by the assigned department?</p>
-                  
-                  <div className="grid grid-cols-1 gap-2">
-                    <button onClick={() => handleFeedback('yes')} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-emerald-500 hover:bg-emerald-50 text-slate-700 transition-colors group">
-                      <span className="text-sm font-semibold">Yes, fully resolved</span>
-                      <ThumbsUp size={16} className="text-slate-400 group-hover:text-emerald-500" />
-                    </button>
-                    <button onClick={() => handleFeedback('partial')} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-amber-500 hover:bg-amber-50 text-slate-700 transition-colors group">
-                      <span className="text-sm font-semibold">Partially resolved</span>
-                      <MinusCircle size={16} className="text-slate-400 group-hover:text-amber-500" />
-                    </button>
-                    <button onClick={() => handleFeedback('no')} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-red-500 hover:bg-red-50 text-slate-700 transition-colors group">
-                      <span className="text-sm font-semibold">No, not resolved</span>
-                      <ThumbsDown size={16} className="text-slate-400 group-hover:text-red-500" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="pt-2">
-            <Link to="/" className="block w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-center font-bold py-4 rounded-2xl transition-colors">
-              Return to Home
-            </Link>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const auth = useAuth();
+  const [report, setReport] = useState<ReportView | null>(null);
+  const [tracking, setTracking] = useState<TrackingDetails | null>(null);
+  const [error, setError] = useState('');
+  const [locationError, setLocationError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
+  const feedbackInFlight = useRef(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  async function giveFeedback(response: 'YES' | 'PARTIALLY' | 'NO') {
+    if (feedbackInFlight.current || !report?.incident_id || !tracking?.can_submit_feedback) return;
+    feedbackInFlight.current = true; setFeedbackBusy(true); setFeedbackMessage('');
+    try {
+      const result = await submitFeedback(report.public_id, report.incident_id, response);
+      setTracking({...tracking, can_submit_feedback: false, feedback_response: response});
+      setFeedbackMessage(result.review_requested ? 'Feedback saved and flagged for review. The incident has not been reopened.' : 'Feedback saved.');
+    } catch (error) {setFeedbackMessage(error instanceof Error ? error.message : 'Feedback could not be saved.');}
+    finally {feedbackInFlight.current = false; setFeedbackBusy(false);}
+  }
+  useEffect(() => {
+    if (auth.loading) return;
+    const controller = new AbortController();
+    setLoading(true); setError(''); setReport(null); setTracking(null); setLocationError('');
+    async function load() {
+      try {
+        if (!id) throw new Error('A tracking ID is required.');
+        const result = await getReport(id, controller.signal);
+        if (controller.signal.aborted) return;
+        setReport(result); setLoading(false);
+        try {
+          const detail = await getTrackingDetails(result.public_id, controller.signal);
+          if (!controller.signal.aborted) setTracking(detail);
+        } catch {if (!controller.signal.aborted) setLocationError('Tracking history and location are unavailable. Refresh to retry.');}
+      } catch (error) {
+        if (!controller.signal.aborted) {setError(error instanceof Error ? error.message : 'Unable to load report.'); setLoading(false);}
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [id, refresh, auth.loading, auth.user?.user_id]);
+  const resolved = report?.status === 'RESOLVED';
+  const pending = report?.ai_status !== 'PROCESSED';
+  return <div className="app-shell"><AppHeader /><main id="main-content" className="page-width tracking-page">
+    <Link to="/track" className="text-link"><ArrowLeft size={16} />Track another report</Link>
+    <div className="page-intro"><span className="section-tag">Report tracking</span><h1>{loading ? 'Loading your report' : error ? 'Report unavailable' : resolved ? 'An update from your community.' : 'Your report, in view.'}</h1><p className="tracking-id">{report?.public_id || id}</p></div>
+    {loading ? <div role="status" className="surface dashboard-loading"><span className="loading-ring" /><p>Loading current report status...</p></div> : error ? <div className="notice notice-error" role="alert">{error}</div> : report && <div className="tracking-layout">
+      <section className="surface tracking-overview"><div className={`tracking-status ${resolved ? 'tracking-resolved' : ''}`}><span className="tracking-status-icon">{resolved ? <ShieldCheck size={25} /> : <Clock size={25} />}</span><div><span className="field-help">Current status</span><h2>{report.statusLabel}</h2></div></div><p>{pending ? 'Your report is stored. AI processing is pending; classification and incident linking are not confirmed.' : report.incident_id ? 'Your report is linked to an incident managed by the operations team.' : 'Your report is stored and is not linked to an incident yet.'}</p>
+        <dl className="tracking-facts"><div><dt><Tag size={16} />Category</dt><dd>{pending ? 'Classification pending' : report.categoryLabel}</dd></div><div><dt><MapPin size={16} />Location</dt><dd>{tracking?.location.landmark || (tracking?.location.latitude != null && tracking.location.longitude != null ? `${tracking.location.latitude}, ${tracking.location.longitude}` : locationError || (tracking ? 'Location not provided.' : 'Loading location...'))}</dd></div>{tracking?.incident_code && <div><dt>Incident</dt><dd>{tracking.incident_code}</dd></div>}</dl>
+        {auth.user && <div className="tracking-evidence"><ReportEvidence key={`${report.public_id}-${auth.user.user_id}`} publicId={report.public_id} /></div>}
+        {resolved && <div className="feedback-section"><h3><MessageSquare size={18} />Was the issue resolved?</h3><p>{tracking?.feedback_response ? `Recorded feedback: ${tracking.feedback_response}` : !auth.user ? 'Sign in to give feedback on your own report.' : tracking?.can_submit_feedback ? 'Let the team know. Each linked report can submit one response.' : 'Feedback is available for your own linked report after resolution.'}</p><fieldset disabled={feedbackBusy || !tracking?.can_submit_feedback} className="feedback-options"><legend className="sr-only">Resolution feedback</legend><button onClick={() => void giveFeedback('YES')} className="button button-secondary"><ThumbsUp size={16} />Fully resolved</button><button onClick={() => void giveFeedback('PARTIALLY')} className="button button-secondary"><MinusCircle size={16} />Partially</button><button onClick={() => void giveFeedback('NO')} className="button button-secondary"><ThumbsDown size={16} />Not resolved</button></fieldset>{feedbackBusy && <p role="status">Saving feedback...</p>}{feedbackMessage && <p role="status">{feedbackMessage}</p>}</div>}
+      </section>
+      <section className="surface tracking-history"><h2>Recorded updates</h2><p className="subtle-text">Status changes from the linked incident.</p>{tracking?.history.length ? <ol className="tracking-timeline">{tracking.history.map((event,index) => <li key={`${event.created_at}-${index}`}><span className="timeline-marker"><Clock size={15} /></span><div><h3>{statusLabels[event.new_status]}</h3><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div></li>)}</ol> : <EmptyState icon={Clock} compact title={locationError ? 'Updates are unavailable' : tracking ? 'No updates yet' : 'Loading updates'}><p>{locationError || (tracking ? 'Your current status is shown on the left. Recorded changes will appear here when available.' : 'Retrieving recorded status changes...')}</p></EmptyState>}</section>
+    </div>}
+    <div className="tracking-footer"><button disabled={loading || feedbackBusy} onClick={() => setRefresh(n => n + 1)} className="button button-secondary">{error ? 'Retry loading report' : 'Refresh status'}</button><Link to="/" className="text-link">Report another issue</Link></div>
+  </main></div>;
 }

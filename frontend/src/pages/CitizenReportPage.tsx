@@ -1,11 +1,16 @@
+import AppHeader from '../components/AppHeader';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/useAuth';
 import { useState, useRef } from 'react';
-import { Camera, Mic, MapPin, Send, AlertCircle, Shield, Globe, CheckCircle2, Square, Trash2 } from 'lucide-react';
+import { Camera, Mic, MapPin, Send, CheckCircle2, Square, Trash2, ArrowRight, FileText, Layers, UserCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WifiOff, AlertTriangle } from 'lucide-react';
 import { useEffect } from 'react';
+import { ApiError, createReport, prepareSubmission, uploadEvidence } from '../services/api';
+import type { SubmissionAttempt } from '../services/api';
 const translations = {
   en: {
-    title: "Report Incident",
+    title: "Report an issue",
     subtitle: "Your report helps keep the community safe.",
     whatHappened: "What happened?",
     aiSummary: "AI will summarize this",
@@ -17,7 +22,6 @@ const translations = {
     submit: "Submit Secure Report",
     processing: "Processing AI...",
     langLabel: "English",
-    categories: ["Infrastructure (Potholes, Water)", "Sanitation (Garbage, Sewers)", "Security (Theft, Suspicious Activity)", "Emergency (Fire, Medical)", "Other"]
   },
   ur: {
     title: "واقعہ کی اطلاع دیں",
@@ -32,7 +36,6 @@ const translations = {
     submit: "رپورٹ جمع کرائیں",
     processing: "AI پروسیسنگ کر رہا ہے...",
     langLabel: "اردو",
-    categories: ["انفراسٹرکچر (سڑکیں، پانی)", "صفائی (کوڑا کرکٹ، سیوریج)", "سیکیورٹی (چوری، مشکوک سرگرمی)", "ہنگامی صورتحال (آگ، میڈیکل)", "دیگر"]
   },
   ru: {
     title: "Incident Report Karein",
@@ -47,7 +50,6 @@ const translations = {
     submit: "Report Jama Karein",
     processing: "AI Process kar raha hai...",
     langLabel: "Roman Urdu",
-    categories: ["Infrastructure (Sarkain, Paani)", "Safai (Kachra, Gutter)", "Security (Chori, Mashkook Harkat)", "Emergency (Aag, Medical)", "Deegar"]
   }
 };
 
@@ -55,13 +57,22 @@ type LangType = 'en' | 'ur' | 'ru';
 
 export default function CitizenReportPage() {
   const navigate = useNavigate();
+  const auth = useAuth();
   const [lang, setLang] = useState<LangType>('en');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState(translations.en.categories[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [landmark, setLandmark] = useState('');
+  const attempt = useRef<SubmissionAttempt | null>(null);
+  const inFlight = useRef(false);
+  const [conflict, setConflict] = useState(false);
   
   // Hardware Integrations State
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const imageUploadId = useRef('');
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const audioUploadId = useRef('');
+  const [storedPublicId, setStoredPublicId] = useState('');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
   const [isLocating, setIsLocating] = useState(false);
@@ -70,19 +81,25 @@ export default function CitizenReportPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioURL, setAudioURL] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  useEffect(() => () => {if (imagePreview) URL.revokeObjectURL(imagePreview);}, [imagePreview]);
+  useEffect(() => () => {if (audioURL) URL.revokeObjectURL(audioURL);}, [audioURL]);
+  useEffect(() => () => {
+    if (recordingTimer.current) clearTimeout(recordingTimer.current);
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {recorder.onstop = null; if (recorder.state !== 'inactive') recorder.stop(); recorder.stream.getTracks().forEach(track => track.stop());}
+  }, []);
   const t = translations[lang];
 
-  const cycleLang = () => {
-    if (lang === 'en') setLang('ur');
-    else if (lang === 'ur') setLang('ru');
-    else setLang('en');
-  };
-
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (inFlight.current) return;
     const file = e.target.files?.[0];
-    if (file) setImagePreview(URL.createObjectURL(file));
+    if (file) {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {setSubmitError('Use JPEG, PNG or WebP up to 10 MiB.'); return;}
+      setImageFile(file); imageUploadId.current = crypto.randomUUID(); setImagePreview(URL.createObjectURL(file));
+    }
   };
 
   const handleGetLocation = () => {
@@ -108,16 +125,18 @@ export default function CitizenReportPage() {
 
   // Audio Recording Logic
   const toggleRecording = async () => {
+    if (inFlight.current) return;
     if (isRecording) {
       // Stop Recording
       mediaRecorderRef.current?.stop();
-      setIsRecording(false);
       mediaRecorderRef.current?.stream.getTracks().forEach(track => track.stop());
     } else {
       // Start Recording
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
+        const mimeType = ['audio/webm;codecs=opus', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
+        if (!mimeType) {stream.getTracks().forEach(track => track.stop()); throw new Error('Recording format unsupported');}
+        const mediaRecorder = new MediaRecorder(stream, {mimeType});
         mediaRecorderRef.current = mediaRecorder;
         audioChunksRef.current = [];
 
@@ -126,11 +145,18 @@ export default function CitizenReportPage() {
         };
 
         mediaRecorder.onstop = () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          if (recordingTimer.current) clearTimeout(recordingTimer.current);
+          setIsRecording(false);
+          stream.getTracks().forEach(track => track.stop());
+          const mime = mediaRecorder.mimeType.split(';')[0];
+          const audioBlob = new Blob(audioChunksRef.current, { type: mime });
+          setAudioFile(new File([audioBlob], mime === 'audio/mp4' ? 'voice.m4a' : 'voice.webm', {type: mime}));
+          audioUploadId.current = crypto.randomUUID();
           setAudioURL(URL.createObjectURL(audioBlob));
         };
 
         mediaRecorder.start();
+        recordingTimer.current = setTimeout(() => {if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();}, 300_000);
         setIsRecording(true);
       } catch (err) {
         console.error("Error accessing microphone:", err);
@@ -141,33 +167,40 @@ export default function CitizenReportPage() {
 
   
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitError(false);
-    
-    // Task 13: Weak/No Internet Check
+    if (inFlight.current || auth.loading) return;
+    setSubmitError(null);
+    setConflict(false);
     if (isOffline) {
-      alert("Your report is waiting to be sent. Please reconnect to the internet.");
+      setSubmitError('You are offline. Reconnect before submitting. This draft is not queued.');
       return;
     }
-
+    inFlight.current = true;
     setIsSubmitting(true);
-    
-    // Simulate API call with a 10% chance of failure to show the error state
-    setTimeout(() => {
-      setIsSubmitting(false);
-      const randomFailure = Math.random() < 0.1; 
-      
-      if (randomFailure) {
-        setSubmitError(true);
-      } else {
-        navigate('/track/CV-1042');
+    let reportCreated = false;
+    try {
+      const input = {description, language: lang, location, landmark};
+      attempt.current = prepareSubmission(input, attempt.current);
+      const report = await createReport(input, attempt.current.submissionId);
+      reportCreated = true;
+      setStoredPublicId(report.public_id);
+      if (auth.user) {
+        if (imageFile) await uploadEvidence(report.public_id, imageFile, imageUploadId.current);
+        if (audioFile) await uploadEvidence(report.public_id, audioFile, audioUploadId.current);
       }
-    }, 1500);
+      navigate(`/track/${encodeURIComponent(report.public_id)}`, {state: {report}});
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Submission failed. Please retry.');
+      setConflict(!reportCreated && error instanceof ApiError && error.status === 409);
+    } finally {
+      inFlight.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [submitError, setSubmitError] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // Native Browser Offline Detection
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -180,134 +213,43 @@ export default function CitizenReportPage() {
     };
   }, []);
 
-  return (
-    <div className={`min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8 flex items-center justify-center font-sans ${lang === 'ur' ? 'dir-rtl' : 'dir-ltr'}`}>
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden transition-all">
-        
-        <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-8 text-white relative overflow-hidden">
-          <div className="absolute top-4 right-4 z-20">
-            <button onClick={cycleLang} className="flex items-center gap-1 bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-full text-sm font-medium backdrop-blur-sm transition-colors">
-              <Globe size={16} /> {t.langLabel}
-            </button>
-          </div>
-          <div className="absolute top-0 right-0 opacity-10 translate-x-4 -translate-y-4">
-            <AlertCircle size={120} />
-          </div>
-          <div className="relative z-10 mt-4" dir={lang === 'ur' ? 'rtl' : 'ltr'}>
-            <div className="flex items-center gap-2 mb-2">
-              <Shield size={20} className="text-red-200" />
-              <span className="text-red-100 text-sm font-semibold tracking-wider uppercase">CivicOps AI</span>
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight">{t.title}</h1>
-            <p className="text-red-100 mt-2 text-sm">{t.subtitle}</p>
-          </div>
+  return <div className="app-shell">
+    <AppHeader />
+    <main id="main-content" className="page-width citizen-layout">
+      <div className="page-intro citizen-intro"><span className="section-tag">Citizen services</span><h1>A better place starts<br className="hidden md:block" /> with a report.</h1><p>Tell us what needs attention. CivicOps helps organize the issue for the people who can respond.</p></div>
+      <section className="surface report-form-panel" aria-labelledby="report-heading">
+        <div className="report-form-heading"><div><h2 id="report-heading">{t.title}</h2><p>{auth.user ? 'Reporting from your citizen account' : 'No account needed for a text report'}</p></div>
+          <div className="language-control"><label htmlFor="report-language" className="sr-only">Report language</label><select id="report-language" value={lang} disabled={isSubmitting} onChange={e => setLang(e.target.value as LangType)}><option value="en">English</option><option value="ur">Urdu / اردو</option><option value="ru">Roman Urdu</option></select></div>
         </div>
-
-{/* Task 13: Offline Warning Banner */}
-{isOffline && (
-  <div className="bg-amber-100 text-amber-800 p-3 text-sm font-semibold flex items-center justify-center gap-2">
-    <WifiOff size={16} />
-    You are offline. Please reconnect to the internet to submit your report.
-  </div>
-)}
-
-        {/* Task 13: Submission Failed Error Banner */}
-        {submitError && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-4 m-6 mb-0 flex items-start gap-3">
-            <AlertTriangle className="text-red-500 mt-0.5" size={18} />
-            <div>
-              <h3 className="text-sm font-bold text-red-800">Submission Failed</h3>
-              <p className="text-xs text-red-600 mt-1">Your report could not be submitted to the backend. Please try again.</p>
+        {isOffline && <div role="status" className="notice notice-warning"><WifiOff size={18} /><span>You are offline. Reconnect to submit; this draft is not queued.</span></div>}
+        {submitError && <div role="alert" className="notice notice-error"><AlertTriangle size={18} /><div><strong>Submission needs attention</strong><p>{submitError}</p>{storedPublicId && <p>Text report saved: <Link to={`/track/${encodeURIComponent(storedPublicId)}`}>{storedPublicId}</Link>. Retry the unchanged draft to finish evidence upload.</p>}{conflict && <button type="button" className="text-link" onClick={() => {attempt.current = null; setConflict(false); setSubmitError(null);}}>Start a new submission for this draft</button>}</div></div>}
+        <form onSubmit={handleSubmit} className="report-form" dir={lang === 'ur' ? 'rtl' : 'ltr'} lang={lang === 'ur' ? 'ur' : lang === 'ru' ? 'ur-Latn' : 'en'}>
+          <div className="form-section"><label htmlFor="report-description" className="field-label"><span className="step-number">1</span>{t.whatHappened}</label><p id="description-help" className="field-help">Describe the issue in your own words. AI identifies its category.</p>
+            <textarea id="report-description" rows={5} required minLength={3} disabled={isSubmitting} aria-describedby="description-help" aria-label={t.whatHappened} value={description} onChange={e => setDescription(e.target.value)} className="field-input report-description" placeholder={t.placeholder} />
+          </div>
+          <div className="form-section"><label htmlFor="landmark" className="field-label"><span className="step-number">2</span>Location or landmark <span className="optional-label">Optional</span></label><input id="landmark" value={landmark} disabled={isSubmitting} onChange={e => setLandmark(e.target.value)} placeholder="E.g., outside the school on Main Street" className="field-input" />
+            <div className="location-action"><button type="button" onClick={handleGetLocation} disabled={isSubmitting || !!location || isLocating} className="button button-secondary"><MapPin size={17} />{isLocating ? 'Finding location...' : location ? t.locationSecured : 'Use my location'}</button>{location && <span className="location-confirmation"><CheckCircle2 size={15} />Coordinates attached</span>}</div>
+          </div>
+          <div className="form-section"><div className="field-label"><span className="step-number">3</span>Photo or voice evidence <span className="optional-label">Optional</span></div>
+            <p className="field-help">{auth.user ? 'Private evidence is available to you and authorized operators.' : 'Sign in before reporting to save private evidence. Anonymous text-only reporting is always available.'}</p>
+            <input type="file" accept="image/jpeg,image/png,image/webp" disabled={isSubmitting} className="hidden" ref={fileInputRef} onChange={handleImageChange} />
+            <div className="evidence-actions"><button type="button" disabled={isSubmitting} onClick={() => fileInputRef.current?.click()} className="button button-secondary"><Camera size={18} />{imagePreview ? 'Change photo' : t.addPhoto}</button><button type="button" onClick={toggleRecording} disabled={isSubmitting} aria-pressed={isRecording} className={`button ${isRecording ? 'button-warning' : 'button-secondary'}`}><>{isRecording ? <Square size={17} /> : <Mic size={18} />}{isRecording ? 'Stop recording' : 'Record voice'}</></button>
+              {auth.user && <label className="button button-secondary file-button">Choose audio<input type="file" aria-label="Upload voice evidence" accept="audio/webm,audio/mp4,audio/mpeg,audio/wav,.m4a" disabled={isSubmitting || isRecording} onChange={e => {const file = e.target.files?.[0]; if (file) {if (file.size > 15 * 1024 * 1024) {setSubmitError('Audio must be at most 15 MiB.'); return;} setAudioFile(file); audioUploadId.current = crypto.randomUUID(); setAudioURL(URL.createObjectURL(file));}}} /></label>}
             </div>
+            {!auth.user && (imagePreview || audioURL) && <p className="field-help">Local preview only. It will not be uploaded with an anonymous report.</p>}
+            {imagePreview && <div className="image-preview"><img src={imagePreview} alt="Selected report evidence preview" /></div>}
+            {audioURL && <div className="audio-preview"><audio src={audioURL} controls /><button type="button" disabled={isSubmitting} onClick={() => {setAudioURL(null); setAudioFile(null);}} className="icon-button" aria-label="Remove voice evidence"><Trash2 size={18} /></button></div>}
+            <p className="field-help evidence-limits">JPEG, PNG or WebP up to 10 MiB. Voice up to 15 MiB and five minutes. A text description is required.</p>
           </div>
-        )}
-
-
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-6" dir={lang === 'ur' ? 'rtl' : 'ltr'}>
-          
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-700 flex items-center justify-between">
-              {t.whatHappened}
-              <span className="text-xs font-normal text-slate-400">{t.aiSummary}</span>
-            </label>
-            <div className="relative group">
-              <textarea 
-                rows={4}
-                required={!audioURL} // Not required if they left a voice note
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className={`w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none resize-none transition-all ${lang === 'ur' ? 'pl-14' : 'pr-14'}`}
-                placeholder={t.placeholder}
-              />
-              <button 
-                type="button" 
-                onClick={toggleRecording}
-                className={`absolute bottom-3 ${lang === 'ur' ? 'left-3' : 'right-3'} p-2.5 rounded-full transition-all duration-200 active:scale-95 shadow-sm border ${isRecording ? 'bg-red-500 text-white border-red-600 animate-pulse' : 'bg-white text-slate-400 hover:text-red-600 hover:bg-red-50 border-slate-100'}`} 
-                title={isRecording ? "Stop recording" : "Record voice"}
-              >
-                {isRecording ? <Square size={18} fill="currentColor" /> : <Mic size={20} />}
-              </button>
-            </div>
-            
-            {/* Audio Preview Bar */}
-            {audioURL && (
-              <div className="flex items-center gap-3 bg-slate-100 p-2 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2">
-                <audio src={audioURL} controls className="h-8 flex-1" />
-                <button type="button" onClick={() => setAudioURL(null)} className="p-2 text-slate-400 hover:text-red-500 bg-white rounded-lg shadow-sm border border-slate-200 transition-colors">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-700">{t.category}</label>
-            <div className="relative">
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-2xl p-4 text-slate-800 focus:bg-white focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all">
-                {t.categories.map((cat, idx) => (
-                  <option key={idx} value={cat}>{cat}</option>
-                ))}
-              </select>
-              <div className={`absolute ${lang === 'ur' ? 'left-4' : 'right-4'} top-1/2 -translate-y-1/2 pointer-events-none text-slate-400`}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 pt-2">
-            <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageChange} />
-            <button type="button" onClick={() => fileInputRef.current?.click()} className="group flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-2xl p-4 hover:border-red-500 hover:bg-red-50 text-slate-600 transition-all active:scale-95 overflow-hidden relative h-24">
-              {imagePreview ? (
-                <img src={imagePreview} alt="Preview" className="absolute inset-0 w-full h-full object-cover opacity-80" />
-              ) : (
-                <><Camera size={24} className="group-hover:text-red-500 transition-colors" /><span className="text-sm font-medium">{t.addPhoto}</span></>
-              )}
-            </button>
-
-            <button type="button" onClick={handleGetLocation} disabled={!!location || isLocating} className={`group flex flex-col items-center justify-center gap-2 border-2 rounded-2xl p-4 transition-all h-24 ${location ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-100 hover:border-red-500 hover:bg-red-50 text-slate-600 shadow-sm active:scale-95'}`}>
-              {isLocating ? (
-                <svg className="animate-spin h-6 w-6 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              ) : location ? (
-                <><CheckCircle2 size={24} className="text-emerald-500" /><span className="text-sm font-medium">{t.locationSecured}</span></>
-              ) : (
-                <><MapPin size={24} className="group-hover:text-red-500 transition-colors" /><span className="text-sm font-medium">{t.setLocation}</span></>
-              )}
-            </button>
-          </div>
-
-          <div className="pt-4">
-            <button type="submit" disabled={isSubmitting} className="w-full bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-red-600/30 transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed">
-              {isSubmitting ? (
-                <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>{t.processing}</>
-              ) : (
-                <>{t.submit} <Send size={20} className={lang === 'ur' ? 'rotate-180' : ''} /></>
-              )}
-            </button>
-          </div>
-          
+          <div className="report-submit"><button type="submit" disabled={isSubmitting || isOffline || isRecording || auth.loading} className="button button-primary submit-button">{isSubmitting ? 'Submitting report...' : t.submit}{isSubmitting ? <span className="loading-ring" /> : <Send size={18} />}</button><p>You will receive a tracking ID after your report is saved.</p></div>
         </form>
-      </div>
-    </div>
-  );
+      </section>
+      <aside className="citizen-guidance"><div className="guidance-title"><span className="guidance-line" /><h2>From your street<br />to the right team.</h2></div><p>One clear description helps the operations team understand what needs attention.</p>
+        <ol className="process-list"><li><FileText size={21} /><div><h3>Your report is saved</h3><p>Text and location become a trackable report. Private evidence is optional.</p></div></li><li><Layers size={21} /><div><h3>AI organizes the issue</h3><p>AI suggests a category and related reports may be grouped into one incident.</p></div></li><li><UserCheck size={21} /><div><h3>People review the response</h3><p>Operators manage assignments, review response plans and record status updates.</p></div></li></ol>
+        <div className="guidance-account"><h3>{auth.user ? 'Your report, connected to you.' : 'Report without an account.'}</h3><p>{auth.user ? 'Your account keeps access to private evidence and eligible resolution feedback.' : 'Anonymous text reporting is available. Sign in for private evidence and feedback on your owned reports.'}</p>{!auth.user && <Link to="/login" className="text-link">Sign in or create an account <ArrowRight size={16} /></Link>}</div>
+        <Link to="/track" className="guidance-tracking">Already reported an issue?<span>Track your report <ArrowRight size={17} /></span></Link>
+      </aside>
+    </main>
+    <footer className="page-width app-footer"><span>CivicOps AI</span><span>Clear reports. Considered responses.</span></footer>
+  </div>;
 }
