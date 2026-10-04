@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getCurrentUser } from './api';
 import { createSessionController } from './session';
 import { createAccountActions } from './accounts';
+import { enrichDepartmentIdentity } from '../utils/departmentDashboard';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -56,5 +57,14 @@ export const authController = createSessionController({
     const {error} = await requireClient().auth.signOut();
     if (error) throw new Error('Sign-out failed. Please retry.');
   },
-  loadUser: () => getCurrentUser(),
+  loadUser: async () => enrichDepartmentIdentity(await getCurrentUser(), {
+    account: async () => {
+      const {data, error} = await requireClient().auth.getUser();
+      return error ? null : data.user;
+    },
+    department: async id => {
+      const {data, error} = await requireClient().from('departments').select('id,display_name').eq('id', id).abortSignal(AbortSignal.timeout(5000)).maybeSingle();
+      return error ? null : data;
+    },
+  }),
 });

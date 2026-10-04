@@ -373,3 +373,66 @@ textarea.field-input { resize: vertical; }
 }
 
 .intelligence-title { scroll-margin-top: 24px; }
+
+/* Department workspace: scoped refinements preserve the operator layout. */
+.department-dashboard .department-subtitle { font-weight: 650; color: var(--accent); font-size: .92rem; }
+.department-dashboard .department-summary { grid-template-columns: repeat(5,minmax(0,1fr)); }
+.department-dashboard .department-layout { grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); }
+.department-workspace { display: grid; gap: 22px; min-width: 0; }
+.department-dashboard .department-map { overflow: hidden; }
+.department-dashboard .department-map .situational-map { border-top: 0; }
+.department-dashboard .map-canvas { height: 320px; }
+.department-dashboard .map-heading { padding: 20px; }
+.department-dashboard .situational-map > .field-help { padding: 0 20px 14px; }
+.department-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px 10px; padding: 0 20px 18px; }
+.department-filters .field-label { display: flex; flex-direction: column; align-items: stretch; gap: 7px; font-size: .75rem; }
+.department-filters .field-input { min-width: 0; min-height: 44px; font-size: .78rem; padding: 10px; }
+.department-search { grid-column: 1 / -1; position: relative; }
+.department-search > svg { position: absolute; top: 14px; left: 12px; color: var(--muted); pointer-events: none; }
+.department-search .field-input { padding-left: 38px; }
+.department-filter-footer { grid-column: 1 / -1; display: flex; gap: 12px; justify-content: space-between; align-items: center; font-size: .73rem; color: var(--muted); }
+.department-dashboard .incident-list { max-height: 600px; }
+.department-dashboard .department-detail { min-width: 0; }
+.department-dashboard .department-actions .field-input { margin-top: 9px; }
+.department-dashboard .department-actions h3 + .field-help { margin: 12px 0 18px; }
+.department-dashboard .department-actions .notice { display: flex; align-items: flex-start; gap: 12px; margin-top: 18px; }
+.department-dashboard .department-actions .notice svg { flex-shrink: 0; }
+.department-dashboard .department-actions .notice p { margin-top: 7px; font-size: .82rem; }
+.department-dashboard .review-heading + .field-help { margin: 12px 0 18px; }
+.department-dashboard .review-actions { margin-top: 16px; }
+.department-dashboard .department-timeline { gap: 0; }
+.department-dashboard .department-timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.department-dashboard .department-timeline li:last-child { border-bottom: 0; }
+.department-dashboard .notice-success { display: flex; gap: 10px; align-items: center; }
+.department-dashboard .dashboard-loading { display: grid; gap: 14px; justify-items: center; text-align: center; }
+.department-dashboard .dashboard-loading h2 { font-size: 1.1rem; }
+.department-dashboard .dashboard-loading p { font-size: .85rem; color: var(--muted); }
+.status-accepted { background: var(--accent-soft); color: var(--accent); }
+.status-resolved_pending_verification { background: var(--warning-soft); color: var(--warning); }
+.department-session { display: flex; flex-direction: column; gap: 3px; max-width: 230px; overflow-wrap: anywhere; }
+.department-session strong { font-size: .75rem; }
+.department-session small { font-size: .7rem; color: var(--muted); }
+@media (max-width: 1024px) {
+  .department-dashboard .department-layout { grid-template-columns: minmax(0,1fr); }
+  .department-dashboard .department-summary { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .department-dashboard .department-summary > div { border-inline-end: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .department-dashboard .department-summary > div:nth-child(3) { border-inline-end: 0; }
+  .department-dashboard .department-summary > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .department-dashboard .incident-list { max-height: 460px; }
+}
+@media (max-width: 600px) {
+  .department-dashboard .department-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .department-dashboard .department-summary > div:nth-child(3) { border-inline-end: 1px solid var(--line); }
+  .department-dashboard .department-summary > div:nth-child(2n) { border-inline-end: 0; }
+  .department-dashboard .department-summary > div:nth-child(4) { border-bottom: 1px solid var(--line); }
+  .department-dashboard .department-summary > div:last-child { grid-column: 1 / -1; border: 0; }
+  .department-dashboard .map-canvas { height: 270px; }
+  .department-filters { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 0 16px 18px; }
+  .department-filters > label[for=department-category] { grid-column: 1 / -1; }
+  .department-filter-footer { flex-wrap: wrap; }
+  .department-dashboard .operations-heading { flex-wrap: wrap; gap: 18px; }
+  .department-dashboard .operations-heading p { max-width: none; }
+  .department-dashboard .operations-heading .button { min-height: 44px; }
+  .department-dashboard .incident-row-facts { gap: 7px 12px; }
+  .department-dashboard .session-controls > .department-session { display: flex; }
+}

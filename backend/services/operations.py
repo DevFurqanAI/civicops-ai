@@ -45,8 +45,8 @@ def perform(repository, incident, user, action, values):
     if action == "STATUS":
         name = "civicops_change_incident_status"
         parameters["p_new_status"] = values["status"]
-    elif action == "ASSIGN":
-        name = "civicops_assign_incident_department"
+    elif action in {"ASSIGN", "ASSIGN_RELEASE"}:
+        name = "civicops_assign_and_release_incident" if action == "ASSIGN_RELEASE" else "civicops_assign_incident_department"
         parameters["p_department_id"] = values["department_id"]
     elif action.startswith("PLAN_"):
         name = "civicops_review_incident_response_plan"

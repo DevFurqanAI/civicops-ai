@@ -154,7 +154,10 @@ class DatabaseTransport:
                     save("incident_status_history", {"id":str(uuid4()), "incident_id":i["id"],"old_status":old,"new_status":target,"notes":p.get("p_notes"),"changed_by":p["p_actor_id"],"created_at":now})
                     audit['details'] = {'role':profile['role'],'department_id':profile.get('department_id'), 'user_id':p['p_actor_id'], 'notes':p.get('p_notes')}
                     audit["action"] = "INCIDENT_STATUS_CHANGED"
-                elif name == "civicops_assign_incident_department":
+                elif name in {"civicops_assign_incident_department", "civicops_assign_and_release_incident"}:
+                    releasing = name == 'civicops_assign_and_release_incident'
+                    if releasing and i['status'] not in {'VERIFIED','ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION','REOPENED'}:
+                        return response('PT409','Verification required')
                     if i["status"] in {"RESOLVED","REJECTED"}: return response("PT409", "Closed incident")
                     for row in self.rows("incident_assignments"):
                         if row["incident_id"] == i["id"] and row.get("completed_at") is None:
@@ -163,7 +166,7 @@ class DatabaseTransport:
                     if not department or not department["is_active"]:
                         db.rollback(); return response("PT422", "Invalid department")
                     save("incident_assignments", {"id":str(uuid4()),"incident_id":i["id"],"department_id":department["id"],"assigned_by":p["p_actor_id"],"assigned_at":now,"completed_at":None,"notes":p.get("p_notes")})
-                    if i['status'] in {'ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION','REOPENED'}:
+                    if (releasing and i['status'] == 'VERIFIED') or i['status'] in {'ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION','REOPENED'}:
                         old = i['status']; i['status'] = 'ASSIGNED'
                         if old != i['status']:
                             save('incident_status_history', {'id':str(uuid4()), 'incident_id':i['id'], 'old_status':old,'new_status':'ASSIGNED','changed_by':p['p_actor_id'],'created_at':now,'notes':p.get('p_notes')})

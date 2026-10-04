@@ -106,9 +106,12 @@ Operator:   pending verification → RESOLVED or REOPENED
 Operator:   REOPENED → reassign/release → ASSIGNED
 ```
 
-Assignment and initial release remain separate: assign a department first, then
-change VERIFIED to ASSIGNED. Automatically routed RECEIVED incidents are not
-department work orders. Starting work requires the existing human-approved plan.
+The operator UI now uses **Assign & release** after explicit verification. It
+sends `release: true` to the existing assignment endpoint, calling the transactional
+`civicops_assign_and_release_incident` wrapper. Assignment, release, history and
+audit either all commit or all roll back. The default assignment API behavior
+(without `release: true`) remains compatible: assign first, then release separately.
+Automatically routed RECEIVED incidents are not department work orders. Starting work requires the existing human-approved plan.
 Completion and verification rejection require private notes.
 
 Reassignment closes the previous active assignment and creates a new one. For
@@ -159,7 +162,7 @@ remain unchanged; negative feedback never reopens automatically.
 
 ## Verification and limitations
 
-Local checks: 180 backend tests passed (3 optional tests skipped), 27 frontend tests
+Local checks: 184 backend tests passed (3 optional tests skipped), 29 frontend tests
 passed, TypeScript/production build and lint passed, and git diff --check passed.
 The production build retains its existing large-bundle warning. The updated live
 scripts were syntax checked but were not executed before database migration.
@@ -176,3 +179,47 @@ No department completion uploads, notifications, multi-department membership or
 public role administration were added. Dashboard refresh is manual. Historical
 operator notes remain private; only department work updates are shown for completion
 review. Existing bundle-size/dependency deprecation warnings remain.
+
+
+## Queue and map correction
+
+The live read-only diagnosis confirmed the WATER_SANITATION account has trusted
+DEPARTMENT membership in an active department. Its three routed incidents were
+all RECEIVED, including two with active assignments. None qualified for the work
+queue. Do not automatically verify those incidents or relax the queue checks.
+
+For an existing database where the Department Portal migration is already applied,
+execute only [department_assignment_release.sql](../backend/sql/department_assignment_release.sql)
+in Supabase SQL Editor. This repeatable patch adds one server-only RPC; it changes
+no tables, checks, roles, policies or existing data. Fresh installations receive
+the same RPC from the full migration. Do not rerun the one-time full migration.
+
+`civicops_assign_and_release_incident(uuid, uuid, timestamptz, uuid, text)` accepts
+incident ID, trusted actor ID, expected incident version, active department ID and
+optional notes. It requires OPERATOR/ADMIN, locks the profile and incident, rejects
+unverified/closed states and stale versions, then calls the existing assignment
+and status functions within one transaction. Those functions retain their active
+assignment closure, history and audit behavior. It returns the assignment result
+plus current status and updated_at. Only service_role can execute it.
+
+Both dashboards now reuse `IncidentMap`, Leaflet CSS and the existing fixed-height
+map styling. Only authorized queue rows are supplied to the department map. Finite,
+in-range coordinates produce markers; selection focuses the map. Missing coordinates
+retain the queue/detail view with an explicit message or empty map state.
+
+After applying the patch and restarting the backend:
+
+1. As an operator, open an intended incident and explicitly change RECEIVED to VERIFIED.
+2. Select WATER_SANITATION and click Assign & release. Confirm status ASSIGNED.
+3. Sign in as wasa@department.pk and open /department/dashboard. Confirm the incident,
+   location marker (when coordinates exist), detail and evidence access.
+4. Select a different mapped incident and confirm the map focuses its coordinates.
+   Select an incident without coordinates and confirm its written location remains visible.
+5. Click Accept Assignment, refresh, and confirm persisted ACCEPTED status.
+6. Sign in as another department: the incident must be absent and its detail denied.
+7. Reassign through the operator dashboard and confirm the previous department loses
+   queue/detail/evidence/action access. Completed assignments must not confer access.
+
+Browser automation was unavailable because its runtime failed before startup.
+The SQL patch has been prepared, not applied by the agent. Live end-to-end acceptance
+of this patch remains pending manual SQL execution and the checks above.

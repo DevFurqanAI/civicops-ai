@@ -14,16 +14,18 @@ A = "00000000-0000-0000-0000-000000000011"
 B = "00000000-0000-0000-0000-000000000012"
 DA = stable_id("department", "WATER_SUPPLY")
 DB = stable_id("department", "ROAD_MAINTENANCE")
+WASA = "00000000-0000-0000-0000-000000000013"
+DW = stable_id("department", "WATER_SANITATION")
 
 @pytest.fixture
 def department_setup(auth_setup, monkeypatch):
     client, db, sdk = auth_setup
-    for identity, dept in [(A, DA), (B, DB)]:
+    for identity, dept in [(A, DA), (B, DB), (WASA, DW)]:
         sdk.table("profiles").insert({"id": identity, "role": "DEPARTMENT", "department_id": dept}).execute()
     original = sdk.auth.get_user
     def verify(token):
-        if token in {"dept-a", "dept-b"}:
-            return SimpleNamespace(user=SimpleNamespace(id=A if token == "dept-a" else B,
+        if token in {"dept-a", "dept-b", "wasa"}:
+            return SimpleNamespace(user=SimpleNamespace(id={"dept-a": A, "dept-b": B, "wasa": WASA}[token],
                 is_anonymous=False, user_metadata={"role": "ADMIN", "department_id": DB}))
         return original(token)
     monkeypatch.setattr(sdk.auth, "get_user", verify)
@@ -227,3 +229,60 @@ def test_new_active_states_keep_fusion_without_overwriting_work(department_setup
         second = client.post("/api/reports", headers=headers(), json=payload(submission_id=str(uuid4()), landmark_text="Beacon school gate 2")).json()
         assert second["incident_id"] == identity and second["status"] == status
     assert len(db.rows("incident_reports")) == 3
+
+@pytest.mark.parametrize("coordinates", [{"latitude": 31.5, "longitude": 74.3}, {"latitude": None, "longitude": None}])
+def test_verified_atomic_release_water_sanitation_queue_acceptance_and_refresh(department_setup, coordinates, monkeypatch):
+    from fastapi.testclient import TestClient
+    from backend import main
+    client, db, sdk = department_setup
+    report = client.post("/api/reports", headers=headers(), json=payload(**coordinates)).json()
+    op = "/api/incidents/" + report["incident_id"]
+    dep = "/api/department/incidents/" + report["incident_id"]
+    body = {"department": "WATER_SANITATION", "release": True}
+    assert client.post(op + "/assign", headers=headers("operator"), json=body).status_code == 409
+    assert db.rows("incident_assignments") == []
+    assert client.post(op + "/status", headers=headers("operator"), json={"status": "VERIFIED"}).status_code == 200
+    version = client.get(op, headers=headers("operator")).json()["updated_at"]
+    assert client.post(op + "/assign", headers=headers("operator"), json={**body, "expected_updated_at": version}).status_code == 200
+    queue = client.get("/api/department/incidents", headers=headers("wasa")).json()
+    assert [r["incident_id"] for r in queue] == [report["incident_id"]]
+    assert queue[0]["status"] == "ASSIGNED"
+    assert queue[0]["location"]["latitude"] == coordinates["latitude"]
+    assert queue[0]["location"]["longitude"] == coordinates["longitude"]
+    assert client.get("/api/department/incidents", headers=headers("dept-b")).json() == []
+    assert client.get(dep, headers=headers("dept-b")).status_code == 404
+    assert client.post(dep + "/status", headers=headers("wasa"), json={"status": "ACCEPTED"}).status_code == 200
+    # New SDK instance on app restart; keep only the deterministic Auth verifier
+    # and the on-disk database, rather than the old client or an in-memory store.
+    verifier = sdk.auth.get_user
+    def fresh_client():
+        replacement = db.client()
+        monkeypatch.setattr(replacement.auth, "get_user", verifier)
+        return replacement
+    monkeypatch.setattr(main, "create_backend_client", fresh_client)
+    with TestClient(main.app) as refreshed:
+        assert refreshed.get(dep, headers=headers("wasa")).json()["status"] == "ACCEPTED"
+        assert len(refreshed.get("/api/department/incidents", headers=headers("wasa")).json()) == 1
+        assert [r["new_status"] for r in refreshed.get(dep + "/history", headers=headers("wasa")).json()] == ["RECEIVED", "VERIFIED", "ASSIGNED", "ACCEPTED"]
+    assert sum(r.get("completed_at") is None for r in db.rows("incident_assignments")) == 1
+
+
+def test_atomic_release_stale_rollback_and_reassignment(department_setup):
+    client, db, sdk = department_setup
+    _, op, dep = release(department_setup)
+    version = client.get(op, headers=headers("operator")).json()["updated_at"]
+    body = {"department": "WATER_SANITATION", "release": True, "expected_updated_at": version}
+    before = {table: db.rows(table) for table in ["incidents", "incident_assignments", "incident_status_history", "audit_logs"]}
+    db.fail_insert_table = "audit_logs"
+    assert client.post(op + "/assign", headers=headers("operator"), json=body).status_code == 503
+    assert all(db.rows(table) == rows for table, rows in before.items())
+    db.fail_insert_table = None
+    assert client.post(op + "/assign", headers=headers("operator"), json=body).status_code == 200
+    assert client.post(op + "/assign", headers=headers("operator"), json=body).status_code == 409
+    assert client.get(dep, headers=headers("dept-a")).status_code == 404
+    assert client.get(dep, headers=headers("wasa")).status_code == 200
+    active = [r for r in db.rows("incident_assignments") if r.get("completed_at") is None]
+    assert len(active) == 1 and active[0]["department_id"] == DW
+    sdk.table("incident_assignments").update({"completed_at": "2026-10-04T15:00:00Z"}).eq("id", active[0]["id"]).execute()
+    assert client.get("/api/department/incidents", headers=headers("wasa")).json() == []
+    assert client.get(dep, headers=headers("wasa")).status_code == 404

@@ -10,14 +10,14 @@ def test_generated_transitions_match_central_policy():
 def test_each_rpc_has_server_only_grants_and_no_security_definer():
     source = SQL.read_text(encoding="utf-8")
     names = ["civicops_change_incident_status", "civicops_assign_incident_department",
-             "civicops_review_incident_response_plan", "civicops_submit_resolution_feedback", "civicops_add_department_work_update"]
+             "civicops_review_incident_response_plan", "civicops_submit_resolution_feedback", "civicops_add_department_work_update", "civicops_assign_and_release_incident"]
     for name in names:
         assert f"REVOKE ALL ON FUNCTION public.{name}" in source
         assert f"GRANT EXECUTE ON FUNCTION public.{name}" in source
-    assert source.count("FROM PUBLIC, anon, authenticated;") == 6
-    assert source.count("TO service_role;") == 6
+    assert source.count("FROM PUBLIC, anon, authenticated;") == 7
+    assert source.count("TO service_role;") == 7
     assert "SECURITY DEFINER" not in source
-    assert source.count("SECURITY INVOKER SET search_path = ''") == 6
+    assert source.count("SECURITY INVOKER SET search_path = ''") == 7
 
 
 def test_assignment_closes_only_prior_active_rows_before_insert():
@@ -67,3 +67,19 @@ def test_department_rpc_checks_actor_membership_assignment_and_notes():
     assert "CASE WHEN actor_role = 'DEPARTMENT' THEN 'USER'" in status
     assert "'department_id',actor_department,'user_id',p_actor_id,'notes',p_notes" in status
     assert "i.status = 'RESOLVED_PENDING_VERIFICATION' AND p_new_status = 'REOPENED'" in status
+
+
+def test_atomic_assign_release_patch_matches_bootstrap_and_checks_before_writes():
+    source = SQL.read_text(encoding="utf-8")
+    patch = SQL.with_name("department_assignment_release.sql").read_text(encoding="utf-8")
+    start = "CREATE OR REPLACE FUNCTION public.civicops_assign_and_release_incident("
+    definition = patch[patch.index(start):patch.index("NOTIFY")].strip()
+    assert definition in source
+    assert "SECURITY DEFINER" not in patch
+    assert "FROM PUBLIC, anon, authenticated" in patch
+    assert "TO service_role" in patch
+    assert patch.index("FOR UPDATE") < patch.index("result := public.civicops_assign_incident_department")
+    assert patch.index("Verify the incident") < patch.index("result := public.civicops_assign_incident_department")
+    assert patch.index("result := public.civicops_assign_incident_department") < patch.index("PERFORM public.civicops_change_incident_status")
+    assert "i.updated_at,'ASSIGNED',p_notes" in patch
+    assert "BEGIN;" in patch and "COMMIT;" in patch

@@ -52,7 +52,11 @@ def update_incident_status(incident_id: str, payload: StatusUpdateRequest,
 def assign_department(incident_id: str, payload: AssignDepartmentRequest,
                       repository=Depends(get_incidents_repository), user=Depends(operator_user)):
     department = repository.department(payload.department.value)
-    return perform(repository, require_incident(repository, incident_id), user, "ASSIGN",
+    incident = require_incident(repository, incident_id)
+    if payload.release and incident["status"] not in {
+            "VERIFIED", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "RESOLVED_PENDING_VERIFICATION", "REOPENED"}:
+        raise HTTPException(409, "Verify the incident before assigning and releasing it")
+    return perform(repository, incident, user, "ASSIGN_RELEASE" if payload.release else "ASSIGN",
                    {"department_id": department["id"], "notes": payload.notes,
                     "expected_updated_at": payload.expected_updated_at})
 

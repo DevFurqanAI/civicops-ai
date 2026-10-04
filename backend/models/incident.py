@@ -13,6 +13,7 @@ class StatusUpdateRequest(VersionedOperation):
 class AssignDepartmentRequest(VersionedOperation):
     department: DepartmentEnum
     notes: Optional[str] = Field(None, max_length=2000)
+    release: bool = False
 
 class ResponsePlanRequest(VersionedOperation):
     action: Literal["APPROVE", "MODIFY", "REJECT"]

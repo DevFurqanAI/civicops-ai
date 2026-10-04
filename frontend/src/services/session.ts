@@ -1,5 +1,5 @@
 export type Role = 'CITIZEN' | 'OPERATOR' | 'ADMIN' | 'DEPARTMENT';
-export interface TrustedUser {user_id: string; role: Role; department_id?: string | null}
+export interface TrustedUser {user_id: string; role: Role; department_id?: string | null; department_name?: string | null; email?: string | null}
 export interface AuthState {loading: boolean; user: TrustedUser | null; error: string}
 let accessToken: string | null = null;
 export const getAccessToken = () => accessToken;

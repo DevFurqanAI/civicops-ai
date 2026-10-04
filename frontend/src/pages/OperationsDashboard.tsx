@@ -5,23 +5,11 @@ import AppHeader from '../components/AppHeader';
 import EmptyState from '../components/EmptyState';
 import { displayTime, visibleSignals } from '../utils/presentation';
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import IncidentMap from '../components/IncidentMap';
 import { getIncidents, getIncident, getDashboardSummary, addOperationalNote, getIncidentActions, updateIncidentStatus, assignIncidentDepartment, reviewResponsePlan } from '../services/api';
 import type { IncidentView, DashboardSummary } from '../services/api';
 import { categoryLabels, departmentLabels, statusLabels } from '../data/civicData';
 import { Clock, MapPin, Bot, Filter, RefreshCw, ShieldCheck, UserCog, ServerCrash, Inbox, ArrowRight, Layers, CheckCircle2 } from 'lucide-react';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-
-const DefaultIcon = L.icon({
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
-
-
 export default function OperationsDashboard() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [filterPriority, setFilterPriority] = useState('ALL');
@@ -57,10 +45,10 @@ export default function OperationsDashboard() {
         const target = requestedStatus || nextStatus;
         if (!target) return;
         await updateIncidentStatus(id, target, activeData.updated_at, note || undefined);
-      } else if (action === 'ASSIGN') await assignIncidentDepartment(id, department, activeData.updated_at, note || undefined);
+      } else if (action === 'ASSIGN') await assignIncidentDepartment(id, department, activeData.updated_at, note || undefined, true);
       else await reviewResponsePlan(id, action, activeData.updated_at,
         action === 'MODIFY' ? planDraft.split('\n').map(step => step.trim()).filter(Boolean) : undefined, note || undefined);
-      setActionMessage(action === 'STATUS' ? 'Status updated.' : action === 'ASSIGN' ? 'Department assigned.' : `Response plan ${action.toLowerCase() === 'modify' ? 'modified; approval required' : action === 'APPROVE' ? 'approved' : 'rejected'}.`);
+      setActionMessage(action === 'STATUS' ? 'Status updated.' : action === 'ASSIGN' ? 'Department assigned and incident released.' : `Response plan ${action.toLowerCase() === 'modify' ? 'modified; approval required' : action === 'APPROVE' ? 'approved' : 'rejected'}.`);
       try {
         const [detail, actions, rows, totals] = await Promise.all([getIncident(id), getIncidentActions(id), getIncidents(), getDashboardSummary()]);
         setActiveData(detail); setAllowedStatuses(actions.allowed_statuses); setNextStatus('');
@@ -113,7 +101,6 @@ export default function OperationsDashboard() {
     });
   }, [filterPriority, filterCategory, incidents, queueScope]);
 
-  const markers = filteredIncidents.filter(incident => incident.mapPosition !== null);
   const busy = noteBusy || actionBusy;
   const closed = activeData && ['RESOLVED', 'REJECTED'].includes(activeData.status);
   return <div className="app-shell operations-shell">
@@ -135,7 +122,7 @@ export default function OperationsDashboard() {
                 <span className="incident-row-footer"><span className={`status-tag status-${incident.status.toLowerCase()}`}>{incident.statusLabel}</span><span>{incident.departmentLabel}</span></span><time dateTime={incident.updated_at} className="incident-time"><Clock size={12} />Updated {displayTime(incident.updated_at)}</time>
               </button>)}
             </div>
-            <div className="situational-map"><div className="map-heading"><h3><MapPin size={16} />Situational map</h3><span>{markers.length} mapped</span></div>{markers.length ? <div className="map-canvas"><MapContainer center={markers[0].mapPosition!} zoom={12} style={{height:'100%',width:'100%'}}><TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{markers.map(incident => <Marker key={incident.id} position={incident.mapPosition!}><Popup><strong>{incident.title}</strong><p>{incident.location.text}</p><button disabled={busy} onClick={() => setSelectedIncident(incident.id)} className="text-link">Review incident</button></Popup></Marker>)}</MapContainer></div> : <EmptyState icon={MapPin} compact title="No mapped incidents"><p>Incidents need coordinates to appear here. The queue still includes reports with a written location.</p></EmptyState>}</div>
+            <IncidentMap incidents={filteredIncidents} selectedId={selectedIncident} onSelect={setSelectedIncident} disabled={busy} />
           </section>
           <section className="surface intelligence-panel" aria-label="Incident intelligence">
             {!selectedIncident ? <EmptyState icon={Layers} title="Select an incident to review"><p>Open a queue item for its summary, supporting signals, private evidence and operational actions.</p><span className="empty-next">Queue <ArrowRight size={15} /> Review <ArrowRight size={15} /> Decide</span></EmptyState> : !activeData ? <div className="detail-loading"><p role={detailError ? 'alert' : 'status'}>{detailError || 'Loading incident intelligence...'}</p>{detailError && <button onClick={() => setDetailRefresh(n => n + 1)} className="button button-secondary">Retry details</button>}</div> : <>
@@ -152,7 +139,7 @@ export default function OperationsDashboard() {
               </section>
               <DepartmentWorkHistory incidentId={activeData.id} version={activeData.updated_at} />
               {activeData.status === 'RESOLVED_PENDING_VERIFICATION' && <section className="intelligence-section"><h3>Verify department completion</h3><p>Review the completion note and confirm the outcome. Citizens can give feedback only after approval.</p><div className="review-actions"><button className="button button-primary" disabled={busy || !allowedStatuses.includes('RESOLVED')} onClick={() => void mutate('STATUS', 'RESOLVED')}>Approve Resolution</button><button className="button button-secondary" disabled={busy || !note.trim() || !allowedStatuses.includes('REOPENED')} onClick={() => void mutate('STATUS', 'REOPENED')}>Reject / Reopen</button></div><p className="field-help">Add a rejection reason in the private notes below.</p></section>}
-              <section className="intelligence-section operator-decisions"><h3><UserCog size={18} />Human decisions</h3><fieldset disabled={busy} className="operational-fields"><div className="operational-row"><label className="field-label" htmlFor="assign-department">Department</label><div><select id="assign-department" aria-label="Assign department" value={department} onChange={e => setDepartment(e.target.value as Department)} className="field-input">{Object.entries(departmentLabels).map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select><button disabled={!!closed} onClick={() => void mutate('ASSIGN')} className="button button-secondary">Assign department</button></div></div><div className="operational-row"><label htmlFor="next-status" className="field-label">Next status</label><div><select id="next-status" aria-label="Update status" value={nextStatus} onChange={e => setNextStatus(e.target.value as IncidentStatus)} className="field-input"><option value="">Select next status</option>{allowedStatuses.map(code => <option key={code} value={code}>{statusLabels[code]}</option>)}</select><button disabled={!nextStatus} onClick={() => void mutate('STATUS')} className="button button-secondary">Update status</button></div></div></fieldset>{['ASSIGNED','REOPENED'].includes(activeData.status) && activeData.response_plan_status !== 'APPROVED' && <p className="inline-warning">Approve the response plan before moving to In progress.</p>}{nextStatus === 'REJECTED' && <p className="inline-warning">Add a reason in the private notes before rejecting.</p>}{actionBusy && <p role="status" className="subtle-text">Saving your decision...</p>}{actionMessage && <p role={actionError ? 'alert' : 'status'} className={`notice ${actionError ? 'notice-error' : 'notice-success'}`}>{actionMessage}</p>}
+              <section className="intelligence-section operator-decisions"><h3><UserCog size={18} />Human decisions</h3>{['RECEIVED','NEEDS_REVIEW'].includes(activeData.status) && <p className="inline-warning">Verify this incident before assigning and releasing it to a department.</p>}<fieldset disabled={busy} className="operational-fields"><div className="operational-row"><label className="field-label" htmlFor="assign-department">Department</label><div><select id="assign-department" aria-label="Assign department" value={department} onChange={e => setDepartment(e.target.value as Department)} className="field-input">{Object.entries(departmentLabels).map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select><button disabled={!['VERIFIED','ASSIGNED','ACCEPTED','IN_PROGRESS','RESOLVED_PENDING_VERIFICATION','REOPENED'].includes(activeData.status)} onClick={() => void mutate('ASSIGN')} className="button button-secondary">Assign &amp; release</button></div></div><div className="operational-row"><label htmlFor="next-status" className="field-label">Next status</label><div><select id="next-status" aria-label="Update status" value={nextStatus} onChange={e => setNextStatus(e.target.value as IncidentStatus)} className="field-input"><option value="">Select next status</option>{allowedStatuses.map(code => <option key={code} value={code}>{statusLabels[code]}</option>)}</select><button disabled={!nextStatus} onClick={() => void mutate('STATUS')} className="button button-secondary">Update status</button></div></div></fieldset>{['ASSIGNED','REOPENED'].includes(activeData.status) && activeData.response_plan_status !== 'APPROVED' && <p className="inline-warning">Approve the response plan before moving to In progress.</p>}{nextStatus === 'REJECTED' && <p className="inline-warning">Add a reason in the private notes before rejecting.</p>}{actionBusy && <p role="status" className="subtle-text">Saving your decision...</p>}{actionMessage && <p role={actionError ? 'alert' : 'status'} className={`notice ${actionError ? 'notice-error' : 'notice-success'}`}>{actionMessage}</p>}
                 <div className="operational-notes"><label htmlFor="operational-note" className="field-label">Private operational note</label><textarea id="operational-note" rows={3} maxLength={2000} disabled={busy} value={note} onChange={e => setNote(e.target.value)} className="field-input" placeholder="Context for the team, or a reason for your decision..." /><p className="field-help">Notes accompany decisions and are hidden from public tracking.</p><button disabled={busy || !note.trim()} onClick={saveNote} className="button button-secondary">{noteBusy ? 'Saving note...' : 'Save note'}</button>{noteMessage && <p role="status" className="subtle-text">{noteMessage}</p>}</div>
               </section>
             </>}
