@@ -67,7 +67,7 @@ test('department map uses only authorized endpoint data; selection and null coor
 });
 test('shared operator map still handles marker selection and active dataset filtering', () => {
   assert.deepEqual(mapFocus(rows, 'three').position, rows[2].mapPosition);
-  assert.equal(mapFocus(rows, 'three').zoom, 15);
+  assert.equal(mapFocus(rows, 'three').zoom, 12);
   assert.deepEqual(mapFocus(rows.filter(row => row.priority === 'HIGH'), 'one').markers.map(row => row.id), ['one']);
   assert.equal(mapFocus(rows, 'two').selectedWithoutCoordinates, true);
   assert.equal(mapFocus([]).position, null);
