@@ -286,3 +286,12 @@ def test_atomic_release_stale_rollback_and_reassignment(department_setup):
     sdk.table("incident_assignments").update({"completed_at": "2026-10-04T15:00:00Z"}).eq("id", active[0]["id"]).execute()
     assert client.get("/api/department/incidents", headers=headers("wasa")).json() == []
     assert client.get(dep, headers=headers("wasa")).status_code == 404
+
+
+def test_manual_location_survives_department_release_and_has_no_coordinates(department_setup):
+    client, _, _ = department_setup
+    report, op, dep = release(department_setup, landmark_text="Near Nishtar Hospital, Multan", latitude=None, longitude=None)
+    expected = {"landmark": "Near Nishtar Hospital, Multan", "latitude": None, "longitude": None}
+    assert client.get(op, headers=headers("operator")).json()["location"] == expected
+    assert client.get(dep, headers=headers("dept-a")).json()["location"] == expected
+    assert client.get("/api/reports/" + report["public_id"] + "/tracking", headers=headers()).json()["location"] == expected

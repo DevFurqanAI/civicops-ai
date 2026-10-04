@@ -41,17 +41,17 @@ export const authController = createSessionController({
   restore: async () => {
     const {data, error} = await requireClient().auth.getSession();
     if (error) throw new Error('Session restoration failed');
-    return data.session?.access_token ?? null;
+    return data.session ? {token: data.session.access_token, user_id: data.session.user.id} : null;
   },
   subscribe: callback => {
     if (!supabase) return () => {};
-    const {data} = supabase.auth.onAuthStateChange((_event, session) => callback(session?.access_token ?? null));
+    const {data} = supabase.auth.onAuthStateChange((event, session) => callback(session ? {token: session.access_token, user_id: session.user.id} : null, event));
     return () => data.subscription.unsubscribe();
   },
   signIn: async (email, password) => {
     const {data, error} = await requireClient().auth.signInWithPassword({email, password});
     if (error || !data.session) throw new Error('Invalid email/password or sign-in is unavailable.');
-    return data.session.access_token;
+    return {token: data.session.access_token, user_id: data.session.user.id};
   },
   signOut: async () => {
     const {error} = await requireClient().auth.signOut();

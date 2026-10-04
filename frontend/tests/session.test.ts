@@ -42,7 +42,7 @@ test('late verification cannot restore a signed-out session', async () => {
   emit('old-token'); await flush(); emit(null); await flush(); resolve(operator); await flush();
   assert.equal(controller.getSnapshot().user, null); assert.equal(getAccessToken(), null); stop();
 });
-test('sign-in uses trusted profile role and refreshed token is verified again', async () => {
+test('legacy token-only drivers reverify an unknown refreshed identity safely', async () => {
   const {controller, emit} = setup(); const stop = controller.start(); await flush();
   assert.equal((await controller.login('citizen@example.test', 'not-a-real-password')).role, 'CITIZEN');
   emit('refreshed-token'); await flush(); assert.equal(getAccessToken(), 'refreshed-token');
@@ -60,4 +60,70 @@ test('login return paths stay inside allowed routes', () => {
   assert.equal(loginDestination('OPERATOR', undefined), '/operator/dashboard');
   assert.equal(loginDestination('CITIZEN', '/track/CV-real'), '/track/CV-real');
   assert.equal(loginDestination('OPERATOR', '//untrusted.invalid'), '/operator/dashboard');
+});
+import type {SessionInput} from '../src/services/session.ts';
+
+function eventSession() {
+  let notify: (session: SessionInput, event?: string) => void = () => {};
+  let calls = 0;
+  let identity = citizen;
+  let finish: (() => void) | null = null;
+  let delayed = false;
+  const session = {token: 'initial-token', user_id: citizen.user_id};
+  const controller = createSessionController({restore: async () => session,
+    subscribe: fn => {notify = fn; return () => {};},
+    signIn: async () => {const next = {token: 'new-login-token', user_id: identity.user_id}; notify(next, 'SIGNED_IN'); return next;},
+    signOut: async () => {}, loadUser: async () => {calls++; if (delayed) await new Promise<void>(resolve => {finish = resolve;}); return identity;}});
+  return {controller, emit: (input: SessionInput, event: string) => notify(input, event),
+    calls: () => calls, setIdentity: (user: TrustedUser) => {identity = user;},
+    delay: () => {delayed = true;}, finish: () => finish?.(), session};
+}
+
+test('initial restore and INITIAL_SESSION verify exactly once, including provider remount', async () => {
+  const env = eventSession();
+  const stop = env.controller.start(); env.emit(env.session, 'INITIAL_SESSION'); await flush();
+  assert.equal(env.calls(), 1);
+  stop(); const restart = env.controller.start(); await flush();
+  assert.equal(env.calls(), 1); assert.equal(env.controller.getSnapshot().loading, false); restart();
+});
+test('visibility/focus SIGNED_IN events, navigation subscribers and dashboard reads reuse the verified identity', async () => {
+  const env = eventSession(); const stop = env.controller.start(); await flush();
+  const original = env.controller.getSnapshot();
+  for (let index = 0; index < 8; index++) env.emit(env.session, 'SIGNED_IN');
+  const unsubscribe = env.controller.subscribe(() => {}); env.controller.getSnapshot(); unsubscribe();
+  await flush(); assert.equal(env.calls(), 1); assert.equal(env.controller.getSnapshot(), original); stop();
+});
+test('silent token refresh updates bearer token with no blocking UI or profile call', async () => {
+  const env = eventSession(); const stop = env.controller.start(); await flush();
+  const original = env.controller.getSnapshot();
+  env.emit({...env.session, token: 'fresh-token'}, 'TOKEN_REFRESHED');
+  assert.equal(env.controller.getSnapshot(), original); assert.equal(getAccessToken(), 'fresh-token');
+  await flush(); assert.equal(env.calls(), 1); stop();
+});
+test('concurrent startup/auth/refresh verification shares the same request', async () => {
+  const env = eventSession(); env.delay(); const stop = env.controller.start();
+  env.emit(env.session, 'SIGNED_IN'); env.emit(env.session, 'INITIAL_SESSION');
+  env.emit({...env.session, token: 'refresh-while-pending'}, 'TOKEN_REFRESHED');
+  await flush(); assert.equal(env.calls(), 1); env.finish(); await flush();
+  assert.equal(env.controller.getSnapshot().user?.user_id, citizen.user_id); stop();
+});
+test('signout is immediate and account switching never reuses the old role', async () => {
+  const env = eventSession(); const stop = env.controller.start(); await flush();
+  env.emit(null, 'SIGNED_OUT');
+  assert.equal(env.controller.getSnapshot().user, null); assert.equal(getAccessToken(), null);
+  env.setIdentity(operator); env.delay();
+  const login = env.controller.login('operator@example.test', 'test-password'); await flush();
+  assert.equal(env.controller.getSnapshot().user, null); assert.equal(env.controller.getSnapshot().loading, true);
+  assert.equal(env.calls(), 2); env.finish();
+  assert.equal((await login).role, 'OPERATOR'); assert.equal(env.calls(), 2); stop();
+});
+test('same-account explicit login refreshes trusted profile without duplicate SIGNED_IN verification', async () => {
+  const env = eventSession(); const stop = env.controller.start(); await flush();
+  env.setIdentity({...citizen, role: 'ADMIN'});
+  assert.equal((await env.controller.login('same@example.test', 'test-password')).role, 'ADMIN');
+  assert.equal(env.calls(), 2); stop();
+});
+test('mismatched Auth identity and backend profile fail closed', async () => {
+  const env = eventSession(); env.setIdentity(operator); const stop = env.controller.start(); await flush();
+  assert.equal(env.controller.getSnapshot().user, null); assert.equal(getAccessToken(), null); stop();
 });

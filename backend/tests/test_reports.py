@@ -435,3 +435,25 @@ def test_invalid_config_sanitized(monkeypatch):
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "test-only-key")
     with pytest.raises(RuntimeError, match="Unable to initialize backend Supabase client"):
         create_backend_client()
+
+@pytest.mark.parametrize("landmark,latitude,longitude,expected_landmark", [
+    ("  Near Nishtar Hospital, Multan  ", None, None, "Near Nishtar Hospital, Multan"),
+    (None, 30.2, 71.4, None),
+    ("Near Nishtar Hospital, Multan", 30.2, 71.4, "Near Nishtar Hospital, Multan"),
+    (None, None, None, None),
+    ("   ", None, None, None),
+])
+def test_independent_manual_and_gps_location_persistence_and_tracking(setup, landmark, latitude, longitude, expected_landmark):
+    client, database = setup
+    response = client.post("/api/reports", json=payload(landmark_text=landmark, latitude=latitude, longitude=longitude))
+    assert response.status_code == 201
+    report = response.json()
+    stored = database.rows()[0]
+    assert stored["landmark_text"] == expected_landmark
+    assert stored["latitude"] == latitude and stored["longitude"] == longitude
+    expected = {"landmark": expected_landmark, "latitude": latitude, "longitude": longitude}
+    assert client.get("/api/reports/" + report["public_id"] + "/tracking").json()["location"] == expected
+    assert client.get("/api/incidents/" + report["incident_id"]).json()["location"] == expected
+    with TestClient(main.app) as restarted:
+        assert restarted.get("/api/reports/" + report["public_id"] + "/tracking").json()["location"] == expected
+        assert restarted.get("/api/reports/" + report["public_id"]).json()["internal_id"] == report["internal_id"]

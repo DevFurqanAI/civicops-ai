@@ -105,7 +105,7 @@ export default function CitizenReportPage() {
   const handleGetLocation = () => {
     setIsLocating(true);
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser');
+      setSubmitError('GPS is unavailable in this browser. You can enter an area, street or landmark and submit without GPS.');
       setIsLocating(false);
       return;
     }
@@ -115,9 +115,8 @@ export default function CitizenReportPage() {
         setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
         setIsLocating(false);
       },
-      (error) => {
-        console.error(error);
-        alert('Unable to retrieve your location. Please check browser permissions.');
+      () => {
+        setSubmitError('GPS could not be retrieved. You can enter an area, street or landmark and submit without GPS.');
         setIsLocating(false);
       }
     );
@@ -227,8 +226,8 @@ export default function CitizenReportPage() {
           <div className="form-section"><label htmlFor="report-description" className="field-label"><span className="step-number">1</span>{t.whatHappened}</label><p id="description-help" className="field-help">Describe the issue in your own words. AI identifies its category.</p>
             <textarea id="report-description" rows={5} required minLength={3} disabled={isSubmitting} aria-describedby="description-help" aria-label={t.whatHappened} value={description} onChange={e => setDescription(e.target.value)} className="field-input report-description" placeholder={t.placeholder} />
           </div>
-          <div className="form-section"><label htmlFor="landmark" className="field-label"><span className="step-number">2</span>Location or landmark <span className="optional-label">Optional</span></label><input id="landmark" value={landmark} disabled={isSubmitting} onChange={e => setLandmark(e.target.value)} placeholder="E.g., outside the school on Main Street" className="field-input" />
-            <div className="location-action"><button type="button" onClick={handleGetLocation} disabled={isSubmitting || !!location || isLocating} className="button button-secondary"><MapPin size={17} />{isLocating ? 'Finding location...' : location ? t.locationSecured : 'Use my location'}</button>{location && <span className="location-confirmation"><CheckCircle2 size={15} />Coordinates attached</span>}</div>
+          <div className="form-section"><label htmlFor="landmark" className="field-label"><span className="step-number">2</span>Location or landmark <span className="optional-label">Optional</span></label><input id="landmark" value={landmark} disabled={isSubmitting} onChange={e => setLandmark(e.target.value)} aria-describedby="location-help" placeholder="Enter an area, street or landmark" className="field-input" />
+            <p id="location-help" className="field-help">Enter an area, street or landmark. GPS permission is optional; your written location is saved independently.</p>{landmark.trim() && <p className="location-confirmation"><CheckCircle2 size={15} />Written location included</p>}<div className="location-action"><button type="button" onClick={handleGetLocation} disabled={isSubmitting || !!location || isLocating} className="button button-secondary"><MapPin size={17} />{isLocating ? 'Finding location...' : location ? t.locationSecured : 'Use my current location (optional)'}</button>{location && <span className="location-confirmation"><CheckCircle2 size={15} />Coordinates attached</span>}</div>
           </div>
           <div className="form-section"><div className="field-label"><span className="step-number">3</span>Photo or voice evidence <span className="optional-label">Optional</span></div>
             <p className="field-help">{auth.user ? 'Private evidence is available to you and authorized operators.' : 'Sign in before reporting to save private evidence. Anonymous text-only reporting is always available.'}</p>

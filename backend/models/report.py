@@ -1,6 +1,6 @@
 from typing import Optional, List, Literal
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from backend.models.common import CategoryEnum, PriorityEnum, IncidentStatusEnum
 
 class ReportCreate(BaseModel):
@@ -11,6 +11,11 @@ class ReportCreate(BaseModel):
     longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
     landmark_text: Optional[str] = None
     image_url: Optional[str] = None
+
+    @field_validator("landmark_text")
+    @classmethod
+    def normalize_landmark(cls, value: Optional[str]) -> Optional[str]:
+        return (value.strip() or None) if value is not None else None
 
 class SupportingSignal(BaseModel):
     signal: str
