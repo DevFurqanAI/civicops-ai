@@ -1,19 +1,15 @@
-from fastapi import APIRouter
-from backend.models.common import PriorityEnum, IncidentStatusEnum
-from backend.services.supabase_client import supabase
+from fastapi import APIRouter, Depends
+from backend.database import get_incidents_repository
+from backend.auth import operator_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
+
 @router.get("/summary")
-def get_dashboard_summary():
-    incidents = []
-    if supabase:
-        res = supabase.table("incidents").select("*").execute()
-        incidents = res.data or []
-        
-    return {
-        "total_active": len(incidents),
-        "critical": sum(1 for i in incidents if i.get("priority") == PriorityEnum.CRITICAL),
-        "awaiting_verification": sum(1 for i in incidents if i.get("status") == IncidentStatusEnum.RECEIVED),
-        "resolved": sum(1 for i in incidents if i.get("status") == IncidentStatusEnum.RESOLVED)
-    }
+def get_dashboard_summary(repository=Depends(get_incidents_repository), user=Depends(operator_user)):
+    incidents = repository.rows("incidents", (("is_", "archived_at", "null"),))
+    active = [i for i in incidents if i["status"] not in {"RESOLVED", "REJECTED"}]
+    return {"total_active": len(active),
+        "critical": sum(i["priority"] == "CRITICAL" for i in active),
+        "awaiting_verification": sum(i["status"] in {"RECEIVED", "NEEDS_REVIEW"} for i in active),
+        "resolved": sum(i["status"] == "RESOLVED" for i in incidents)}

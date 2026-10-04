@@ -1,10 +1,5 @@
+from typing import Literal
 from pydantic import BaseModel
-
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-class UserResponse(BaseModel):
-    username: str
-    role: str
-    token: str
+class CurrentUserResponse(BaseModel):
+    user_id: str
+    role: Literal["CITIZEN", "OPERATOR", "ADMIN"]

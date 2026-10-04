@@ -1,7 +1,14 @@
-import { useState, useMemo } from 'react';
+import type { Department, IncidentStatus } from '../data/civicData';
+import ReportEvidence from '../components/ReportEvidence';
+import AppHeader from '../components/AppHeader';
+import EmptyState from '../components/EmptyState';
+import { displayTime, visibleSignals } from '../utils/presentation';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import { mockIncidents } from '../data/mockData';
-import { AlertCircle, Shield, Clock, CheckCircle, MapPin, ArrowLeft, Bot, Filter, AlertTriangle, ShieldCheck, UserCog, ServerCrash, Inbox } from 'lucide-react';
+import { getIncidents, getIncident, getDashboardSummary, addOperationalNote, getIncidentActions, updateIncidentStatus, assignIncidentDepartment, reviewResponsePlan } from '../services/api';
+import type { IncidentView, DashboardSummary } from '../services/api';
+import { categoryLabels, departmentLabels, statusLabels } from '../data/civicData';
+import { Clock, MapPin, Bot, Filter, RefreshCw, ShieldCheck, UserCog, ServerCrash, Inbox, ArrowRight, Layers, CheckCircle2 } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -17,259 +24,137 @@ L.Marker.prototype.options.icon = DefaultIcon;
 export default function OperationsDashboard() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [filterPriority, setFilterPriority] = useState('ALL');
+  const [queueScope, setQueueScope] = useState<'ACTIVE' | 'ALL'>('ACTIVE');
   const [filterCategory, setFilterCategory] = useState('ALL');
   
-  // Task 13: Manage API states (success, empty, error)
-  const [apiState, setApiState] = useState<'success' | 'empty' | 'error'>('success');
-  const [incidents, setIncidents] = useState(mockIncidents);
+  const [apiState, setApiState] = useState<'loading' | 'success' | 'empty' | 'error'>('loading');
+  const [incidents, setIncidents] = useState<IncidentView[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const [activeData, setActiveData] = useState<IncidentView | null>(null);
+  const [detailError, setDetailError] = useState('');
+  const [detailRefresh, setDetailRefresh] = useState(0);
+  const [note, setNote] = useState('');
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteMessage, setNoteMessage] = useState('');
+  const [department, setDepartment] = useState<Department>('MANUAL_REVIEW');
+  const [nextStatus, setNextStatus] = useState<IncidentStatus | ''>('');
+  const [allowedStatuses, setAllowedStatuses] = useState<IncidentStatus[]>([]);
+  const [planDraft, setPlanDraft] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
+  const [actionError, setActionError] = useState(false);
+  const actionInFlight = useRef(false);
+  const intelligenceTitle = useRef<HTMLHeadingElement>(null);
+  async function mutate(action: 'STATUS' | 'ASSIGN' | 'APPROVE' | 'MODIFY' | 'REJECT') {
+    if (!activeData || actionInFlight.current) return;
+    actionInFlight.current = true; setActionBusy(true); setActionMessage(''); setActionError(false);
+    const id = activeData.id;
+    try {
+      if (action === 'STATUS') {
+        if (!nextStatus) return;
+        await updateIncidentStatus(id, nextStatus, activeData.updated_at, note || undefined);
+      } else if (action === 'ASSIGN') await assignIncidentDepartment(id, department, activeData.updated_at, note || undefined);
+      else await reviewResponsePlan(id, action, activeData.updated_at,
+        action === 'MODIFY' ? planDraft.split('\n').map(step => step.trim()).filter(Boolean) : undefined, note || undefined);
+      setActionMessage(action === 'STATUS' ? 'Status updated.' : action === 'ASSIGN' ? 'Department assigned.' : `Response plan ${action.toLowerCase() === 'modify' ? 'modified; approval required' : action === 'APPROVE' ? 'approved' : 'rejected'}.`);
+      try {
+        const [detail, actions, rows, totals] = await Promise.all([getIncident(id), getIncidentActions(id), getIncidents(), getDashboardSummary()]);
+        setActiveData(detail); setAllowedStatuses(actions.allowed_statuses); setNextStatus('');
+        setDepartment(detail.department); setPlanDraft(detail.response_plan.join('\n')); setIncidents(rows); setSummary(totals);
+      } catch {setActionError(true); setActionMessage('Action saved, but refreshed data is unavailable. Refresh before another action.'); setActiveData(null); setDetailError('Action was saved, but details could not reload. Retry details before another action.');}
+    } catch (error) {setActionError(true); setActionMessage(error instanceof Error ? error.message : 'Action failed.');}
+    finally {actionInFlight.current = false; setActionBusy(false);}
+  }
+  async function saveNote() {
+    if (!activeData || noteBusy || !note.trim()) return;
+    const identity = activeData.id;
+    setNoteBusy(true); setNoteMessage('');
+    try {await addOperationalNote(identity, note); setNote(''); setNoteMessage('Operational note saved.');}
+    catch (error) {setNoteMessage(error instanceof Error ? error.message : 'Note could not be saved.');}
+    finally {setNoteBusy(false);}
+  }
+  useEffect(() => {
+    const controller = new AbortController();
+    setApiState('loading');
+    Promise.all([getIncidents(controller.signal), getDashboardSummary(controller.signal)])
+      .then(([rows, totals]) => {
+        if (controller.signal.aborted) return;
+        setIncidents(rows); setSummary(totals); setApiState(rows.length ? 'success' : 'empty');
+      }).catch(error => {if (!controller.signal.aborted) {setError(error.message); setApiState('error');}});
+    return () => controller.abort();
+  }, [refresh]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setActiveData(null); setDetailError(''); setNote(''); setNoteMessage(''); setActionMessage(''); setAllowedStatuses([]); setNextStatus('');
+    if (selectedIncident) Promise.all([getIncident(selectedIncident, controller.signal), getIncidentActions(selectedIncident, controller.signal)])
+      .then(([detail, actions]) => {if (!controller.signal.aborted) {setActiveData(detail); setDepartment(detail.department); setAllowedStatuses(actions.allowed_statuses); setPlanDraft(detail.response_plan.join('\n'));}})
+      .catch(error => {if (!controller.signal.aborted) setDetailError(error.message);});
+    return () => controller.abort();
+  }, [selectedIncident, detailRefresh, refresh]);
 
-  // Debug controls to show judges the different states
-  const toggleApiState = (state: 'success' | 'empty' | 'error') => {
-    setApiState(state);
-    if (state === 'empty') setIncidents([]);
-    if (state === 'success') setIncidents(mockIncidents);
-  };
-
-  const activeData = incidents.find(inc => inc.id === selectedIncident);
+  const activeIncidentId = activeData?.id;
+  useEffect(() => {
+    if (activeIncidentId && window.matchMedia('(max-width: 800px)').matches) {
+      intelligenceTitle.current?.focus({preventScroll: true});
+      intelligenceTitle.current?.scrollIntoView({block: 'start', behavior: 'auto'});
+    }
+  }, [activeIncidentId]);
 
   const filteredIncidents = useMemo(() => {
     return incidents.filter(inc => {
       const matchPriority = filterPriority === 'ALL' || inc.priority === filterPriority;
       const matchCategory = filterCategory === 'ALL' || inc.category === filterCategory;
-      return matchPriority && matchCategory;
+      const matchScope = queueScope === 'ALL' || !['RESOLVED', 'REJECTED'].includes(inc.status);
+      return matchPriority && matchCategory && matchScope;
     });
-  }, [filterPriority, filterCategory, incidents]);
+  }, [filterPriority, filterCategory, incidents, queueScope]);
 
-  return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
-      
-      {/* Hackathon Debug Bar - Remove in production */}
-      <div className="bg-slate-800 text-xs text-white p-2 flex justify-center gap-4 z-50">
-        <span className="opacity-50">Simulate Backend:</span>
-        <button onClick={() => toggleApiState('success')} className={`hover:text-emerald-400 ${apiState === 'success' ? 'text-emerald-400 font-bold' : ''}`}>Normal</button>
-        <button onClick={() => toggleApiState('empty')} className={`hover:text-amber-400 ${apiState === 'empty' ? 'text-amber-400 font-bold' : ''}`}>Empty DB</button>
-        <button onClick={() => toggleApiState('error')} className={`hover:text-red-400 ${apiState === 'error' ? 'text-red-400 font-bold' : ''}`}>Server Down</button>
-      </div>
-
-      <header className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md z-20 relative">
-        <div className="flex items-center gap-3">
-          <Shield className="text-red-500" size={28} />
-          <h1 className="text-xl font-bold tracking-wide">CivicOps <span className="text-slate-400 font-light">Command Center</span></h1>
+  const markers = filteredIncidents.filter(incident => incident.mapPosition !== null);
+  const busy = noteBusy || actionBusy;
+  const closed = activeData && ['RESOLVED', 'REJECTED'].includes(activeData.status);
+  return <div className="app-shell operations-shell">
+    <AppHeader operations />
+    <main id="main-content" className="operations-width">
+      <div className="operations-heading"><div><span className="section-tag">Civic operations</span><h1>Command center</h1><p>Review the queue. Understand the incident. Decide the response.</p></div><button disabled={apiState === 'loading' || busy} onClick={() => setRefresh(n => n + 1)} className="button button-secondary"><RefreshCw size={16} />Refresh data</button></div>
+      {apiState === 'error' ? <div role="alert" className="surface"><EmptyState icon={ServerCrash} title="The queue is unavailable"><p>{error}</p><button onClick={() => setRefresh(n => n + 1)} className="button button-primary">Try again</button></EmptyState></div> : apiState === 'loading' ? <div role="status" className="surface dashboard-loading"><span className="loading-ring" /><p>Loading incidents and summary...</p></div> : <>
+        <dl className="summary-strip"><div><dt>Active incidents</dt><dd>{summary?.total_active ?? '-'}</dd></div><div className="summary-critical"><dt>Critical priority</dt><dd>{summary?.critical ?? '-'}</dd></div><div className="summary-warning"><dt>Awaiting verification</dt><dd>{summary?.awaiting_verification ?? '-'}</dd></div><div className="summary-success"><dt>Resolved</dt><dd>{summary?.resolved ?? '-'}</dd></div></dl>
+        <div className="command-layout">
+          <section className="surface queue-panel" aria-labelledby="queue-title">
+            <div className="queue-heading"><div><h2 id="queue-title">Incident queue</h2><span className="subtle-text">{filteredIncidents.length} in this view</span></div><div className="scope-control" aria-label="Queue view"><button disabled={busy} aria-pressed={queueScope === 'ACTIVE'} onClick={() => setQueueScope('ACTIVE')}>Active</button><button disabled={busy} aria-pressed={queueScope === 'ALL'} onClick={() => setQueueScope('ALL')}>All incidents</button></div></div>
+            <div className="queue-filters"><Filter size={16} /><label className="sr-only" htmlFor="filter-priority">Filter priority</label><select id="filter-priority" aria-label="Filter priority" value={filterPriority} disabled={busy} onChange={e => setFilterPriority(e.target.value)} className="field-input"><option value="ALL">All priorities</option><option value="CRITICAL">Critical</option><option value="HIGH">High</option><option value="MEDIUM">Medium</option><option value="LOW">Low</option></select><label className="sr-only" htmlFor="filter-category">Filter category</label><select id="filter-category" aria-label="Filter category" value={filterCategory} disabled={busy} onChange={e => setFilterCategory(e.target.value)} className="field-input"><option value="ALL">All categories</option>{Object.entries(categoryLabels).map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></div>
+            <div className="incident-list">
+              {!filteredIncidents.length ? <EmptyState icon={Inbox} title={filterPriority !== 'ALL' || filterCategory !== 'ALL' ? 'No matching incidents' : queueScope === 'ACTIVE' ? 'No active incidents' : 'Your queue is clear'}><p>{filterPriority !== 'ALL' || filterCategory !== 'ALL' ? 'Try another category or priority to see more of the queue.' : 'New incidents will appear here when reports are processed and linked.'}</p><button className="text-link" onClick={() => {setFilterPriority('ALL'); setFilterCategory('ALL'); setQueueScope('ALL');}}>View all incidents <ArrowRight size={15} /></button></EmptyState> : filteredIncidents.map(incident => <button key={incident.id} disabled={busy} aria-pressed={selectedIncident === incident.id} aria-label={`Open ${incident.displayId}`} onClick={() => setSelectedIncident(incident.id)} className="incident-row">
+                <span className="incident-row-top"><span className={`priority-tag priority-${incident.priority.toLowerCase()}`}>{incident.priority}</span><span className="incident-code">{incident.displayId}</span><ArrowRight size={15} className="row-arrow" /></span>
+                <h3>{incident.title}</h3><p className="queue-summary">{incident.summary || 'No summary available.'}</p>
+                <span className="incident-row-facts"><span>{incident.categoryLabel}</span><span><Layers size={13} />{incident.report_count} {incident.report_count === 1 ? 'report' : 'reports'}</span></span>
+                <span className="incident-row-location"><MapPin size={14} /><span>{incident.location.text}</span></span>
+                <span className="incident-row-footer"><span className={`status-tag status-${incident.status.toLowerCase()}`}>{incident.statusLabel}</span><span>{incident.departmentLabel}</span></span><time dateTime={incident.updated_at} className="incident-time"><Clock size={12} />Updated {displayTime(incident.updated_at)}</time>
+              </button>)}
+            </div>
+            <div className="situational-map"><div className="map-heading"><h3><MapPin size={16} />Situational map</h3><span>{markers.length} mapped</span></div>{markers.length ? <div className="map-canvas"><MapContainer center={markers[0].mapPosition!} zoom={12} style={{height:'100%',width:'100%'}}><TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{markers.map(incident => <Marker key={incident.id} position={incident.mapPosition!}><Popup><strong>{incident.title}</strong><p>{incident.location.text}</p><button disabled={busy} onClick={() => setSelectedIncident(incident.id)} className="text-link">Review incident</button></Popup></Marker>)}</MapContainer></div> : <EmptyState icon={MapPin} compact title="No mapped incidents"><p>Incidents need coordinates to appear here. The queue still includes reports with a written location.</p></EmptyState>}</div>
+          </section>
+          <section className="surface intelligence-panel" aria-label="Incident intelligence">
+            {!selectedIncident ? <EmptyState icon={Layers} title="Select an incident to review"><p>Open a queue item for its summary, supporting signals, private evidence and operational actions.</p><span className="empty-next">Queue <ArrowRight size={15} /> Review <ArrowRight size={15} /> Decide</span></EmptyState> : !activeData ? <div className="detail-loading"><p role={detailError ? 'alert' : 'status'}>{detailError || 'Loading incident intelligence...'}</p>{detailError && <button onClick={() => setDetailRefresh(n => n + 1)} className="button button-secondary">Retry details</button>}</div> : <>
+              <div className="intelligence-heading"><span className="incident-code">{activeData.displayId}</span><span className={`priority-tag priority-${activeData.priority.toLowerCase()}`}>{activeData.priority} priority</span><h2 ref={intelligenceTitle} tabIndex={-1} className="intelligence-title">{activeData.title}</h2><p>{activeData.categoryLabel}<span className="inline-separator">/</span><time dateTime={activeData.updated_at}>Updated {displayTime(activeData.updated_at)}</time></p></div>
+              <dl className="incident-current"><div><dt>Current status</dt><dd><span className={`status-tag status-${activeData.status.toLowerCase()}`}>{activeData.statusLabel}</span></dd></div><div><dt>Current department</dt><dd>{activeData.departmentLabel}</dd></div><div className="incident-location"><dt>Location</dt><dd><MapPin size={15} />{activeData.location.text}</dd></div></dl>
+              <section className="intelligence-section ai-summary"><h3><Bot size={18} />AI summary<span className="source-label">AI-generated</span></h3><p>{activeData.aiSummary}</p></section>
+              <dl className="intelligence-metrics"><div><dt>Linked reports</dt><dd>{activeData.report_count}</dd><small>Submissions in this incident</small></div><div><dt>Evidence confidence</dt><dd>{Math.round(activeData.evidence_confidence * 100)}<span>%</span><span className="metric-band">{activeData.evidence.toLowerCase()}</span></dd><small>System confidence estimate</small></div><div><dt>Spam risk</dt><dd>{Math.round(activeData.spam_risk * 100)}<span>%</span><span className={`metric-band ${activeData.spamRisk === 'HIGH' ? 'risk-high' : ''}`}>{activeData.spamRisk.toLowerCase()}</span></dd><small>Separate risk estimate</small></div></dl>
+              <section className="intelligence-section"><h3><Layers size={17} />Supporting signals</h3>{visibleSignals(activeData.supporting_signals).length ? <ul className="signals-list">{visibleSignals(activeData.supporting_signals).map((signal,index) => <li key={index}><strong>{signal.label}</strong><p>{signal.detail}</p></li>)}</ul> : <p className="subtle-text">No supporting signals are available for this incident.</p>}<p className="field-help">Grouping decisions and a location-confidence score are not available in this view.</p></section>
+              <section className="intelligence-section"><ReportEvidence key={activeData.incident_id} incidentId={activeData.incident_id} /></section>
+              <section className="intelligence-section response-review"><div className="review-heading"><h3><ShieldCheck size={18} />Response plan</h3><span className={`approval-tag approval-${activeData.response_plan_status.toLowerCase()}`}>{activeData.response_plan_status === 'PENDING' ? 'Awaiting review' : activeData.response_plan_status === 'MODIFIED' ? 'Modified / approval needed' : activeData.response_plan_status === 'APPROVED' ? 'Human approved' : 'Rejected'}</span></div>
+                <div className="review-flow"><span><Bot size={15} />AI recommendation</span><ArrowRight size={14} /><span><UserCog size={15} />Operator review</span><ArrowRight size={14} /><span><CheckCircle2 size={15} />Decision</span></div>
+                {activeData.response_plan.length ? <ol className="response-steps">{activeData.response_plan.map((step,index) => <li key={index}>{step}</li>)}</ol> : <p className="subtle-text">No response plan is available. Add a proposed plan for review below.</p>}
+                <fieldset disabled={busy || !!closed} className="review-editor"><label htmlFor="response-plan" className="field-label">Review or modify the plan</label><textarea id="response-plan" rows={4} value={planDraft} onChange={e => setPlanDraft(e.target.value)} className="field-input" /><p className="field-help">One step per line. Modified plans need a separate approval.</p>{planDraft !== activeData.response_plan.join('\n') && <p className="inline-warning">Save your changes before approving.</p>}<div className="review-actions"><button disabled={!planDraft.trim()} onClick={() => void mutate('MODIFY')} className="button button-secondary">Save modifications</button><button disabled={!activeData.response_plan.length || !['PENDING','MODIFIED'].includes(activeData.response_plan_status) || planDraft !== activeData.response_plan.join('\n')} onClick={() => void mutate('APPROVE')} className="button button-primary">Approve plan</button><button onClick={() => void mutate('REJECT')} className="button button-quiet">Reject</button></div></fieldset>{closed && <p className="field-help">Plan review is closed for {activeData.statusLabel.toLowerCase()} incidents.</p>}
+              </section>
+              <section className="intelligence-section operator-decisions"><h3><UserCog size={18} />Human decisions</h3><fieldset disabled={busy} className="operational-fields"><div className="operational-row"><label className="field-label" htmlFor="assign-department">Department</label><div><select id="assign-department" aria-label="Assign department" value={department} onChange={e => setDepartment(e.target.value as Department)} className="field-input">{Object.entries(departmentLabels).map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select><button disabled={!!closed} onClick={() => void mutate('ASSIGN')} className="button button-secondary">Assign department</button></div></div><div className="operational-row"><label htmlFor="next-status" className="field-label">Next status</label><div><select id="next-status" aria-label="Update status" value={nextStatus} onChange={e => setNextStatus(e.target.value as IncidentStatus)} className="field-input"><option value="">Select next status</option>{allowedStatuses.map(code => <option key={code} value={code}>{statusLabels[code]}</option>)}</select><button disabled={!nextStatus} onClick={() => void mutate('STATUS')} className="button button-secondary">Update status</button></div></div></fieldset>{['ASSIGNED','REOPENED'].includes(activeData.status) && activeData.response_plan_status !== 'APPROVED' && <p className="inline-warning">Approve the response plan before moving to In progress.</p>}{nextStatus === 'REJECTED' && <p className="inline-warning">Add a reason in the private notes before rejecting.</p>}{actionBusy && <p role="status" className="subtle-text">Saving your decision...</p>}{actionMessage && <p role={actionError ? 'alert' : 'status'} className={`notice ${actionError ? 'notice-error' : 'notice-success'}`}>{actionMessage}</p>}
+                <div className="operational-notes"><label htmlFor="operational-note" className="field-label">Private operational note</label><textarea id="operational-note" rows={3} maxLength={2000} disabled={busy} value={note} onChange={e => setNote(e.target.value)} className="field-input" placeholder="Context for the team, or a reason for your decision..." /><p className="field-help">Notes accompany decisions and are hidden from public tracking.</p><button disabled={busy || !note.trim()} onClick={saveNote} className="button button-secondary">{noteBusy ? 'Saving note...' : 'Save note'}</button>{noteMessage && <p role="status" className="subtle-text">{noteMessage}</p>}</div>
+              </section>
+            </>}
+          </section>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/30 flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${apiState === 'success' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
-            {apiState === 'success' ? 'System Online' : 'System Offline'}
-          </span>
-          <div className="w-10 h-10 bg-slate-800 rounded-full border border-slate-700 flex items-center justify-center font-bold text-slate-300">OP</div>
-        </div>
-      </header>
-
-      {/* Task 13: API Error State */}
-      {apiState === 'error' ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-          <div className="bg-red-50 text-red-500 p-6 rounded-full mb-4">
-            <ServerCrash size={64} />
-          </div>
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">Unable to load data.</h2>
-          <p className="text-slate-500 max-w-md">The CivicOps backend is currently unresponsive. Please check your connection and try again.</p>
-          <button onClick={() => toggleApiState('success')} className="mt-6 bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold transition-colors">Retry Connection</button>
-        </div>
-      ) : (
-        <main className="flex-1 p-6 flex flex-col gap-6 max-w-[1600px] mx-auto w-full">
-          {/* Summary Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-              <div className="bg-slate-100 p-3 rounded-xl text-slate-600"><AlertCircle size={24} /></div>
-              <div><p className="text-sm font-medium text-slate-500">Active Incidents</p><p className="text-2xl font-bold text-slate-800">{incidents.length}</p></div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-              <div className="bg-red-50 p-3 rounded-xl text-red-600"><Shield size={24} /></div>
-              <div><p className="text-sm font-medium text-slate-500">Critical Priority</p><p className="text-2xl font-bold text-red-600">{incidents.filter(i => i.priority === 'CRITICAL').length}</p></div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-              <div className="bg-amber-50 p-3 rounded-xl text-amber-600"><Clock size={24} /></div>
-              <div><p className="text-sm font-medium text-slate-500">Awaiting Verification</p><p className="text-2xl font-bold text-amber-600">{incidents.filter(i => i.status === 'Under Review' || i.status === 'Received').length}</p></div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-              <div className="bg-emerald-50 p-3 rounded-xl text-emerald-600"><CheckCircle size={24} /></div>
-              <div><p className="text-sm font-medium text-slate-500">Resolved Today</p><p className="text-2xl font-bold text-emerald-600">12</p></div>
-            </div>
-          </div>
-
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-[600px]">
-            
-            {/* Interactive Map */}
-            <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative z-10 flex flex-col">
-              <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-                <h2 className="font-bold text-slate-800 flex items-center gap-2"><MapPin size={18} className="text-slate-400" /> Live Incident Map</h2>
-              </div>
-              <div className="flex-1 w-full h-full bg-slate-100">
-                <MapContainer center={[31.5204, 74.3587]} zoom={12} style={{ height: '100%', width: '100%', zIndex: 1 }}>
-                  <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  {filteredIncidents.map((incident) => (
-                    <Marker key={incident.id} position={[incident.location.lat, incident.location.lng]}>
-                      <Popup>
-                        <div className="font-sans">
-                          <strong className="block text-slate-800">{incident.title}</strong>
-                          <span className="text-xs text-slate-500">{incident.location.text}</span>
-                          <div className="mt-2 text-xs font-bold text-red-600">{incident.priority} PRIORITY</div>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  ))}
-                </MapContainer>
-              </div>
-            </div>
-
-            {/* Right Panel: Queue & Details */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative">
-              {activeData ? (
-                // Full Incident Details & Operator Controls
-                <div className="flex-1 flex flex-col absolute inset-0 bg-white z-20 overflow-y-auto">
-                  <div className="p-4 border-b border-slate-100 bg-white flex items-center gap-3 sticky top-0 z-30">
-                    <button onClick={() => setSelectedIncident(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><ArrowLeft size={20} /></button>
-                    <h2 className="font-bold text-slate-800">Incident Processing</h2>
-                  </div>
-                  
-                  <div className="p-5 space-y-6">
-                    <div>
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="text-xs font-bold px-2 py-1 rounded bg-slate-200 text-slate-700">{activeData.id}</span>
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${activeData.priority === 'CRITICAL' ? 'bg-red-100 text-red-700' : activeData.priority === 'HIGH' ? 'bg-orange-100 text-orange-700' : 'bg-slate-200 text-slate-600'}`}>{activeData.priority} PRIORITY</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-slate-800">{activeData.title}</h3>
-                      <p className="text-sm text-slate-500 flex items-center gap-1 mt-1"><MapPin size={14} /> {activeData.location.text}</p>
-                    </div>
-                    
-                    {/* Security & Trust Panel */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                        <p className="text-xs font-medium text-slate-500 mb-1">Evidence Confidence</p>
-                        <div className="flex items-center gap-2">
-                          {activeData.evidence === 'HIGH' ? <ShieldCheck size={18} className="text-emerald-500" /> : <Shield size={18} className="text-slate-400" />}
-                          <span className={`font-bold ${activeData.evidence === 'HIGH' ? 'text-emerald-700' : 'text-slate-700'}`}>{activeData.evidence}</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1">{activeData.independentReports} independent reports matched</p>
-                      </div>
-                      <div className={`border rounded-xl p-3 ${activeData.spamRisk === 'HIGH' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
-                        <p className="text-xs font-medium text-slate-500 mb-1">Spam Risk</p>
-                        <div className="flex items-center gap-2">
-                          {activeData.spamRisk === 'HIGH' ? <AlertTriangle size={18} className="text-red-500" /> : <CheckCircle size={18} className="text-emerald-500" />}
-                          <span className={`font-bold ${activeData.spamRisk === 'HIGH' ? 'text-red-700' : 'text-emerald-700'}`}>{activeData.spamRisk}</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1">{activeData.spamRisk === 'HIGH' ? 'Identical payload signatures detected' : 'Standard submission pattern'}</p>
-                      </div>
-                    </div>
-
-                    {/* AI Verification Panel */}
-                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-2 text-indigo-700 font-bold"><Bot size={20} /> AI Analysis</div>
-                      <p className="text-sm text-indigo-900 leading-relaxed">{activeData.aiSummary}</p>
-                      <div className="flex items-center justify-between pt-2 border-t border-indigo-200/50">
-                        <span className="text-xs font-medium text-indigo-600">AI Routing Suggestion</span>
-                        <span className="text-sm font-bold text-indigo-700">{activeData.suggestedDept}</span>
-                      </div>
-                    </div>
-
-                    {/* Operator Controls */}
-                    <div className="border-t border-slate-100 pt-4 space-y-4">
-                      <div className="flex items-center gap-2 text-slate-800 font-bold mb-2"><UserCog size={20} /> Operator Controls</div>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">Assign Department</label>
-                          <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 outline-none focus:border-blue-500" defaultValue={activeData.suggestedDept}>
-                            <option value="WASA">WASA (Water & Sanitation)</option>
-                            <option value="Police">Police Department</option>
-                            <option value="LDA">LDA (Development)</option>
-                            <option value="Rescue1122">Rescue 1122</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">Update Status</label>
-                          <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 outline-none focus:border-blue-500" defaultValue={activeData.status}>
-                            <option value="Received">Received</option>
-                            <option value="Under Review">Under Review</option>
-                            <option value="Assigned">Assigned / Verified</option>
-                            <option value="In Progress">In Progress</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Resolution Notes / Directives</label>
-                        <textarea rows={2} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 outline-none focus:border-blue-500 resize-none" placeholder="Add internal notes or dispatch instructions..." />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3 pt-2">
-                        <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors text-sm">Save & Dispatch</button>
-                        <button className="w-full bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold py-3 rounded-xl transition-colors text-sm border border-emerald-200">Mark as Resolved</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                // Incident Queue with Filters
-                <div className="flex-1 flex flex-col bg-white h-full">
-                  <div className="p-4 border-b border-slate-100 bg-white space-y-3">
-                    <h2 className="font-bold text-slate-800 flex items-center gap-2">Incident Queue</h2>
-                    <div className="flex gap-2">
-                      <div className="flex-1 relative">
-                        <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <select onChange={(e) => setFilterPriority(e.target.value)} className="w-full pl-8 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 outline-none">
-                          <option value="ALL">All Priorities</option>
-                          <option value="CRITICAL">Critical</option>
-                          <option value="HIGH">High</option>
-                          <option value="LOW">Low</option>
-                        </select>
-                      </div>
-                      <div className="flex-1 relative">
-                        <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <select onChange={(e) => setFilterCategory(e.target.value)} className="w-full pl-8 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 outline-none">
-                          <option value="ALL">All Categories</option>
-                          <option value="Infrastructure">Infrastructure</option>
-                          <option value="Security">Security</option>
-                          <option value="Maintenance">Maintenance</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                    
-                    {/* Task 13: Empty Database State */}
-                    {apiState === 'empty' ? (
-                      <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                        <div className="bg-slate-100 text-slate-400 p-4 rounded-full mb-3">
-                          <Inbox size={40} />
-                        </div>
-                        <h3 className="font-bold text-slate-700">No active incidents found.</h3>
-                        <p className="text-xs text-slate-500 mt-1">Your jurisdiction is currently secure.</p>
-                      </div>
-                    ) : filteredIncidents.length === 0 ? (
-                      <div className="text-center text-slate-400 py-8 text-sm">No incidents match these filters.</div>
-                    ) : (
-                      filteredIncidents.map((incident) => (
-                        <div key={incident.id} onClick={() => setSelectedIncident(incident.id)} className="p-4 rounded-xl border border-slate-100 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all">
-                          <div className="flex justify-between items-start mb-2">
-                            <span className="text-xs font-bold px-2 py-1 rounded bg-slate-200 text-slate-700">{incident.id}</span>
-                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${incident.priority === 'CRITICAL' ? 'bg-red-100 text-red-700' : incident.priority === 'HIGH' ? 'bg-orange-100 text-orange-700' : 'bg-slate-200 text-slate-600'}`}>{incident.priority}</span>
-                          </div>
-                          <h3 className="font-semibold text-slate-800 text-sm">{incident.title}</h3>
-                          <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                            <span className="flex items-center gap-1"><MapPin size={12} /> {incident.location.text}</span>
-                            <span>{incident.status}</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
-      )}
-    </div>
-  );
+      </>}
+    </main>
+  </div>;
 }

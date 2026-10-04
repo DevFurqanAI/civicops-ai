@@ -1,10 +1,9 @@
-import os
-from dotenv import load_dotenv
-from supabase import create_client, Client
+"""Compatibility export for the centralized server-only Supabase client factory.
 
-load_dotenv()
+Routes use backend.database repository dependencies backed by app.state.supabase.
+Do not create a second client at import time or silently disable persistence.
+"""
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
+from backend.database import create_backend_client
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY) if SUPABASE_URL and SUPABASE_SECRET_KEY else None
+__all__ = ["create_backend_client"]
