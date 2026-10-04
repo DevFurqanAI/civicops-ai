@@ -1,231 +1,222 @@
 # CivicOps AI
 
-CivicOps AI is a multilingual civic incident intelligence and operations platform that turns citizen reports into structured, deduplicated, actionable incidents for human operators. Citizens describe local issues in English, Urdu or Roman Urdu; AI structures the intake, conservative matching groups related reports, and authorized operators manage a persistent response workflow with human approval, tracking and feedback.
+An intelligent community incident and response coordination platform designed for multilingual, accessible civic reporting and human-supervised operational response.
+
+## Overview
+
+CivicOps AI turns citizen reports into structured, persistent incidents for human operators and assigned departments. Designed around Pakistan's multilingual reporting needs, it connects reporting, incident intelligence, field work, verification and citizen feedback.
 
 ## Problem
 
-Civic complaints often arrive through fragmented channels. Duplicate reports obscure the scale of an issue, language barriers make reporting harder, and weak routing delays the right department's response. Citizens lack clear progress updates, while authorities lack a shared operational picture. Accessibility and limited connectivity add further friction.
+Fragmented complaints, duplicate reports, language barriers, weak routing, limited visibility and accessibility challenges make civic response difficult to coordinate and track.
 
 ## Solution
 
-```text
-Citizen Report
-    → Multilingual AI Intake
-    → Classification / Risk / Spam Analysis
-    → Incident Fusion
-    → Operator Dashboard
-    → Human Review & Response
-    → Status Tracking & Feedback
+A simple web report feeds structured AI intake and conservative incident fusion. Operators review recommendations and release assignments. Departments record work and submit completion; operators confirm final resolution before eligible citizens provide feedback.
+
+## Key Features
+
+- English, Urdu and Roman Urdu reporting; anonymous text-only submissions.
+- Citizen signup, login/logout, session restoration and password reset.
+- Manual landmarks, optional GPS, and private image/audio evidence.
+- Structured AI classification and summaries; separate reported urgency, priority, evidence confidence and spam risk.
+- Durable idempotency and multiple reports linked to one persistent incident.
+- Operator Command Center: filters, evidence, plan review, Assign & Release and completion verification.
+- Isolated Department Dashboard: trusted identity, queue counts, filters, shared map, work updates and completion submission.
+- Real status/assignment history, audit logging, versioned operational actions, tracking and eligible resolution feedback.
+
+## System Workflow
+
+```mermaid
+flowchart LR
+  C[Citizen report] --> AI[Multilingual intake]
+  AI --> F[Report persistence and incident fusion]
+  F --> O[Operator review]
+  O --> A[Assign & Release]
+  A --> D[Department work]
+  D --> V[Operator verification]
+  V --> T[Tracking and eligible feedback]
 ```
 
-The current intake channel is the web portal. WhatsApp and SMS are future intake channels.
-
-## Key features
-
-- **Accessible reporting:** English, Urdu and Roman Urdu text intake; anonymous text-only submission; authenticated citizen accounts with signup and password reset.
-- **Private evidence:** optional image and audio uploads for signed-in report owners, validated and normalized by the backend.
-- **Structured intake:** AI classification and summary, reported urgency, injection detection, and separate evidence-confidence and spam-risk estimates. AI failures retain truthful pending states.
-- **Reliable persistence:** durable submission idempotency, conflict detection and report tracking IDs.
-- **Incident intelligence:** conservative report fusion, derived report counts, stored matching decisions and supporting signals.
-- **Operations workspace:** incident queue, filters, map-based incident view, department assignment, operational notes and status history.
-- **Human control:** operator authentication, trusted role authorization, response-plan approval/modification/rejection, and audited operational actions.
-- **Citizen visibility:** report tracking, real status history, owned-report evidence access and eligible resolution feedback.
-
-## Why CivicOps is different
-
-CivicOps carries a report through an operational workflow beyond the initial conversation. Multiple reports can become one persistent incident, with matching based on explicit category, location, time and text criteria. Uncertain matches remain separate. AI recommendations are distinct from human decisions, and sensitive response actions require operator approval. Multilingual reporting makes that workflow accessible to more citizens.
+AI extracts facts, rules match/prioritize/route, and humans approve plans and resolution. See [architecture and lifecycle](docs/ARCHITECTURE.md).
 
 ## Architecture
 
 ```text
-React / Vite Frontend ─────────→ Supabase Auth
-        │                         login / session
-        │ Bearer access token
-        ↓
-FastAPI Backend
-        │
-        ├───────────────┬────────────────────────┐
-        ↓               ↓                        ↓
-    Groq LLM       Supabase PostgreSQL     Private Supabase Storage
-    AI intake      reports / incidents     image / audio evidence
-                   profiles / history
-                   feedback / audit
+React / Vite
+  ├─ Supabase Auth → access token
+  ├─ shared Leaflet map → MapTiler Streets raster
+  └─ Bearer API requests → FastAPI
+                           ├─ Groq structured intake
+                           └─ server-only Supabase client
+                              ├─ Auth token verification
+                              ├─ PostgreSQL repositories + operational RPCs
+                              └─ private report-evidence Storage
 ```
 
-Supabase Auth provides identity. FastAPI verifies access tokens and loads trusted roles from `profiles`; frontend role input is never authoritative. Privileged database operations and evidence access go through FastAPI. The frontend receives only the Supabase URL and publishable key, **never `SUPABASE_SECRET_KEY`**.
+Trusted roles/membership come from profiles. Protected data and operational writes go through FastAPI. The browser uses Supabase directly for Auth and an optional RLS-protected department display-name read; it never receives the server secret.
 
-## Tech stack
+## Roles
+
+| Role | Implemented access |
+| --- | --- |
+| Citizen | Report, track allowed reports, upload owned evidence, submit eligible feedback |
+| Operator | Command Center, verify/review, assign/release, plan review, notes, final resolution/reopen |
+| Department | Own released assignments/evidence, accept/start/update/submit completion |
+| Admin | Same implemented operational capabilities as Operator; no separate admin UI |
+
+Public signup creates CITIZEN. Elevated accounts use trusted provisioning. See [Department Portal](docs/DEPARTMENT_PORTAL.md).
+
+## Technology Stack
 
 | Layer | Technologies |
 | --- | --- |
-| Frontend | React, TypeScript, Vite, Tailwind CSS, Leaflet / OpenStreetMap, Supabase JS |
-| Backend | Python 3.12, FastAPI, Pydantic, Groq, Supabase Python SDK, Pillow, FFmpeg / ffprobe |
-| Infrastructure | Supabase Auth, PostgreSQL, private Supabase Storage; Railway-ready backend and Vercel-ready frontend |
+| Frontend | React 18, TypeScript, Vite 5, Tailwind CSS 4, React Router, Lucide, Leaflet/React Leaflet, Supabase JS |
+| Backend | Python 3.12, FastAPI, Pydantic 2, Groq SDK, Supabase Python SDK, Pillow, FFmpeg/ffprobe |
+| Infrastructure/configuration | Supabase Auth/PostgreSQL/Storage, MapTiler, Railway backend, Vercel frontend |
 
-## Repository structure
+## Repository Structure
 
 ```text
-civicops-ai/
-├── backend/
-│   ├── main.py                 # FastAPI application
-│   ├── models/                 # Request/response schemas and enums
-│   ├── routes/                 # API endpoints
-│   ├── repositories/           # Persistent database access
-│   ├── services/               # Intake, fusion, operations and evidence
-│   ├── sql/                    # Atomic operational RPC definitions
-│   ├── tests/                  # Unit, integration and optional live checks
-│   ├── tools/                  # Private storage provisioning helper
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/
-│   ├── src/                    # Pages, components, auth and API services
-│   ├── tests/                  # API adapter and account/session tests
-│   └── vercel.json
-├── docs/                       # Product, design and deployment documentation
-├── railway.json
-└── .dockerignore
+backend/
+  models/          API models/enums
+  routes/          Reports, auth, incidents, department, dashboard, media, feedback
+  repositories/    Supabase persistence
+  services/        Intake, fusion, operations, evidence
+  sql/             Migrations/RPCs
+  tests/           Deterministic tests and opt-in live verifiers
+  tools/           Private-bucket provisioning
+  Dockerfile
+frontend/
+  src/
+    auth/          Session provider and role guards
+    components/    Shared map, evidence, navigation, history
+    pages/         Citizen, account, tracking, operational portals
+    services/      Typed API adapters, Auth/session/account clients
+    utils/         Filtering, presentation, map helpers
+  tests/
+  vercel.json
+docs/              Product, architecture, API, deployment, verification
+railway.json
+.dockerignore
 ```
 
-## Local setup
+## Local Development
 
-Prerequisites: Python 3.12, Node.js 24 with npm, a configured Supabase project, a Groq API key, and `ffmpeg` / `ffprobe` on `PATH` for audio evidence.
+Use Python 3.12 and Node.js 24.x. Install FFmpeg and ffprobe on PATH for audio processing.
 
-**1. Create and activate the backend environment** from the repository root:
+From the repository root, PowerShell:
 
 ```powershell
 py -3.12 -m venv backend/.venv
-.\backend\.venv\Scripts\Activate.ps1
+backend/.venv/Scripts/Activate.ps1
 python -m pip install -r backend/requirements.txt
-```
-
-On macOS/Linux, use `python3.12 -m venv backend/.venv` and `source backend/.venv/bin/activate` before installing dependencies.
-
-**2. Install frontend dependencies:**
-
-```text
-cd frontend
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/.env.example frontend/.env
+Push-Location frontend
 npm ci
-cd ..
+Pop-Location
 ```
 
-**3. Configure environment files.** Create `backend/.env` and `frontend/.env` using their respective `.env.example` files if they do not already exist. Preserve existing local credentials. See the variables below.
+Copy examples only if destination files are absent; preserve existing environment values. On POSIX use `python3.12 -m venv backend/.venv`, `source backend/.venv/bin/activate` and `cp`.
 
-**4. Prepare the Supabase environment.** The application requires the existing database contract, seeded departments, RLS policies and the Auth-to-`profiles` trigger that creates citizens. The repository does not contain a complete fresh-database bootstrap. Apply the operational functions following [backend/sql/README.md](backend/sql/README.md). Configure Auth redirect URLs for `/auth/callback` and `/auth/reset` on your frontend origin.
+## Environment Variables
 
-For a new environment, provision the private evidence bucket after configuring backend credentials:
-
-```text
-python -m backend.tools.prepare_storage
-```
-
-**5. Run FastAPI** from the repository root with the virtual environment active:
-
-```text
-uvicorn backend.main:app --reload
-```
-
-API: `http://127.0.0.1:8000`; interactive API documentation: `http://127.0.0.1:8000/docs`; health check: `/health`.
-
-**6. Run the frontend** in a second terminal:
-
-```text
-cd frontend
-npm run dev
-```
-
-Open `http://localhost:5173`. Operator access requires a profile promoted through a trusted administrative process; public signup creates citizens only.
-
-## Environment variables
-
-Backend — `backend/.env`:
+Backend `backend/.env`:
 
 ```dotenv
-SUPABASE_URL=<supabase-project-url>
-SUPABASE_SECRET_KEY=<server-only-secret-key>
-GROQ_API_KEY=<groq-api-key>
-LLM_MODEL=<supported-groq-model>
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=YOUR_SERVER_SECRET
+GROQ_API_KEY=YOUR_SERVER_GROQ_KEY
+LLM_MODEL=YOUR_SUPPORTED_GROQ_MODEL
 APP_ENV=development
+FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-For production, set `APP_ENV=production` and `FRONTEND_ORIGINS` to your configured HTTPS frontend origin(s). Production configuration validates required settings. Local development permits the configured localhost origins without wildcard credentialed CORS.
-
-Frontend — `frontend/.env`:
+Frontend `frontend/.env`:
 
 ```dotenv
 VITE_API_URL=http://127.0.0.1:8000
-VITE_SUPABASE_URL=<supabase-project-url>
-VITE_SUPABASE_PUBLISHABLE_KEY=<supabase-publishable-key>
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_WITH_PUBLIC_KEY
+VITE_MAPTILER_API_KEY=YOUR_BROWSER_MAP_KEY
 ```
 
-**Never place `SUPABASE_SECRET_KEY` or `GROQ_API_KEY` in frontend files or `VITE_*` variables.** Frontend build variables are browser-visible. Environment files are excluded from version control.
+Never expose SUPABASE_SECRET_KEY or GROQ_API_KEY in frontend code, Vite variables or source control. Restrict the browser MapTiler key to intended origins. Vite variables are embedded at build time: restart locally or rebuild/redeploy after changes. Missing MapTiler configuration shows a graceful fallback; production builds require the three API/Auth variables.
 
-## Database / core tables
+## Database / Supabase Setup
 
-| Purpose | Tables |
-| --- | --- |
-| Identity and routing | `profiles`, `departments` |
-| Citizen intake and evidence | `reports`, `report_media` |
-| Incident intelligence | `incidents`, `incident_reports` |
-| Operational history | `incident_assignments`, `incident_status_history` |
-| Accountability | `resolution_feedback`, `audit_logs` |
+Tables: profiles, departments, reports, report_media, incidents, incident_reports, incident_assignments, incident_status_history, resolution_feedback and audit_logs. RLS is enabled. Reports keep intake state separate from incident operations; many reports may link to one incident.
 
-Many reports can link to one incident; each report belongs to at most one incident. Report processing status remains separate from incident operational status. Reported urgency is distinct from final incident priority, and evidence confidence is distinct from spam risk.
+**This repository is not a complete empty-database bootstrap.** Base DDL, seeds, RLS and the citizen-only profile trigger must already exist. Follow [SQL applicability/order](backend/sql/README.md). Do not rerun one-time migrations or restore historical Stage 4 RPCs over the department workflow.
 
-## Security
+For a new environment, provision/verify private evidence storage:
 
-- RLS is enabled; the privileged Supabase key remains backend-only. FastAPI enforces authorization because privileged server access must not rely on browser restrictions.
-- Verified identity and trusted profile roles separate citizen access from operator/admin actions. Signup cannot grant elevated roles.
-- Evidence stays in private storage. Backend ownership/role checks mediate uploads and downloads; permanent public URLs are not used.
-- Operational RPCs atomically persist changes, history and audit events. `expected_updated_at` protects against stale operational updates.
-- Durable idempotency prevents duplicate submissions and rejects conflicting key reuse. Public-safe tracking history excludes private operator notes and user IDs.
-- Human response-plan approval is required; negative citizen feedback flags review rather than automatically reopening an incident.
+```powershell
+python -m backend.tools.prepare_storage
+```
+
+Configure Auth redirect URLs using [deployment readiness](docs/DEPLOYMENT_READINESS.md).
+
+## Running Frontend
+
+From frontend/:
+
+```powershell
+npm run dev
+```
+
+Open http://127.0.0.1:5173; use one origin consistently for PKCE links.
+
+## Running Backend
+
+With the virtual environment activated, from the repository root:
+
+```powershell
+uvicorn backend.main:app --reload
+```
+
+API: http://127.0.0.1:8000; liveness: /health; generated API docs: /docs. See [backend guide](backend/README.md) and [API contracts](docs/API_CONTRACT.md).
 
 ## Testing
 
-Last verified results documented in [Stage 5 changes](docs/STAGE5_CHANGES.md): **153 backend tests passed** (3 optional live tests skipped), **23 frontend tests passed**, and **48 live Auth/database/storage checks passed**. The live checks used an in-process FastAPI client with real Supabase services and cleaned up disposable data. TypeScript/build and lint checks also passed.
-
-Run from the repository root with the backend environment active:
-
-```text
-python -m pytest backend/tests -q
-cd frontend
+```powershell
+backend/.venv/Scripts/python.exe -m pytest backend/tests -q
+Push-Location frontend
 npm test
 npm run build
 npm run lint
-cd ..
+Pop-Location
 git diff --check
 ```
 
-The frontend build includes TypeScript checking. Browser acceptance, signup/reset email delivery and the Docker image build still require manual verification; automated live checks do not establish those results.
+Build includes TypeScript checking. See [testing and demo verification](docs/TESTING.md) for coverage, live checks and manual acceptance.
 
 ## Deployment
 
-The backend is prepared for **Railway** using `railway.json` and `backend/Dockerfile`; the frontend is prepared for **Vercel** using `frontend/vercel.json`. Deployment has not been performed. Follow [Deployment readiness](docs/DEPLOYMENT_READINESS.md) for build/start commands, environment configuration, health checks, production CORS, Auth redirect URLs and the manual acceptance checklist.
+Railway uses root railway.json and backend/Dockerfile; Vercel uses root directory frontend. [Deployment readiness](docs/DEPLOYMENT_READINESS.md) documents exact settings. Repository configuration does not establish live deployment status.
 
-## Current limitations / future work
+## Security Model
 
-- WhatsApp/SMS intake and broader offline/low-connectivity support are not implemented.
-- Fusion uses basic text similarity, distance, landmarks and time; stronger semantic matching remains future work. Confidence estimates do not establish independent-source validation.
-- Audio transcription and AI image corroboration are not implemented.
-- Distributed abuse prevention, evidence retention and scheduled orphan cleanup remain pending. Storage and database writes do not share a transaction.
-- Some helper copy remains English. Detailed match decisions and location confidence are not currently exposed in the incident UI.
-- Vite/esbuild development-tool advisories remain accepted for isolated loopback hackathon development; the last production-only npm audit was clean. A larger frontend bundle and manual deployment acceptance checks remain documented in the readiness guide.
+FastAPI verifies tokens and explicit roles. Department access requires trusted active membership, current department, active assignment and released work state. Server-only RPCs recheck authorization and commit operational history/audits atomically. UI actions send expected_updated_at to reject stale edits.
 
-## Team
+Evidence is content-validated and privately served through authorized endpoints. Idempotency prevents duplicate retries. Safe tracking omits private notes/actor IDs. Anonymous tracking remains readable by holders of its high-entropy report ID; it is not authenticated ownership. Media resource limits are per process, not distributed abuse prevention. These controls are not production security certification.
 
-| Name | Contribution |
+## Limitations / Current Scope
+
+Web intake only. WhatsApp/SMS, notifications, offline synchronization, embeddings, advanced analytics, government integration, multi-department membership and department completion photos are future scope.
+
+Priority/trust scores use simple rules; uploaded media does not automatically rescore intelligence. Response plans are templates, not automatic dispatch. Fusion/storage metadata writes have retry recovery rather than cross-service atomicity. Background AI retry/reconciliation, distributed intake abuse prevention and retention/orphan cleanup are absent. Full interface translation and browser/hosting acceptance remain separate checks.
+
+## Team Members
+
+| Member | Role |
 | --- | --- |
-| Muhammad Furqan Arshad | Team Lead / Integration / Architecture |
-| Muhammad Huzaifa Shamas | Frontend Development |
-| Ghulam Mohy Ud Din | Backend / AI Integration |
-| Muhammad Ali | Civic Logic / Routing Rules |
-| Khadeeja Ameen | Testing / Validation |
-| Aleeba Pervaiz | QA / System Testing |
+| Muhammad Furqan Arshad | Team Lead, System Architecture & Integration |
+| Ghulam Mohy Ud Din | Backend & AI Systems Lead |
+| Muhammad Huzaifa Shamas | Frontend & Command Center Lead |
+| Aleeba Pervaiz | QA & System Validation Lead |
+| Khadeeja Ameen | AI Evaluation & Community Experience Lead |
+| Muhammad Ali | Incident Intelligence & Operations Coordinator |
 
-## Hackathon
-
-**PakAngel’s Generative AI Hackathon — Final (2nd) Hackathon**
-
-Theme: *Build Intelligent Agents to Reshape the Future, Unlock Potential & Drive Innovation*
-
-Further reading: [Product](docs/PRODUCT.md) · [Backend](backend/README.md) · [Frontend](frontend/README.md) · [Design](docs/DESIGN.md) · [Redesign notes](docs/REDESIGN_NOTES.md) · [Stage 4 changes](docs/STAGE4_CHANGES.md) · [Stage 5 changes](docs/STAGE5_CHANGES.md).
+PakAngel's Generative AI Hackathon — Final (2nd) Hackathon. Theme: **Build Intelligent Agents to Reshape the Future, Unlock Potential & Drive Innovation**.

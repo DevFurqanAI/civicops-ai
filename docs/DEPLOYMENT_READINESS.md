@@ -1,215 +1,117 @@
-# Stage 5 deployment readiness (nothing deployed)
+# CivicOps AI deployment readiness
 
-The implementation is ready for local acceptance checks. Production activation
-still requires the manual checklist below and explicit deployment approval.
-Existing reports/incidents and Stage 4 transaction RPCs are unchanged.
+Repository configuration targets Railway + Vercel, Supabase and MapTiler. This guide does not certify live hosting, SQL activation, email delivery or browser acceptance. No deployment is performed by documentation synchronization.
 
-## Media architecture and limits
+## Prerequisites and SQL order
 
-- Private Supabase Storage bucket: `report-evidence`. It has been provisioned and
-  verified private, with a 15 MiB object limit and only normalized JPEG/WebM MIME
-  types accepted by Storage. No public object URLs are stored or returned.
-- Browser sends raw file bytes to authenticated FastAPI. POST
-  `/api/reports/{public_id}/media?upload_id=<retry UUID>&filename=<original name>`.
-  The filename is validated but never used as an object path. Server derives a
-  report-scoped UUID and stores `<report UUID>/<media UUID>.jpg` or `.webm`.
-- JPEG/PNG/WebP: up to 10 MiB, single frame, at most 12 million pixels. Pillow
-  decodes content, checks actual format against MIME/extension, corrects orientation
-  and re-encodes JPEG without EXIF/GPS or other source metadata.
-- WebM, MP4/M4A, MPEG/MP3 and WAV: up to 15 MiB and five minutes. Magic bytes,
-  ffprobe container/stream checks and full FFmpeg decode validate content. Audio-only
-  streams normalize to mono WebM/Opus with source metadata stripped. No transcription
-  or AI image corroboration is claimed.
-- `report_media`: id, report_id, IMAGE/AUDIO, storage_path, normalized mime_type,
-  SHA-256 of stored content, safe size/dimension/duration metadata and input hash.
-  OTHER is reserved; there is no arbitrary attachment uploader.
-- Only a signed-in report owner can upload. Owners and trusted operators/admins
-  can fetch evidence through FastAPI. Anonymous text-only submission still works;
-  anonymous previews are not uploaded and anonymous reports cannot be claimed later.
-- GET `/api/reports/{public_id}/media` lists safe metadata. GET
-  `/api/reports/{public_id}/media/{media_id}` returns protected bytes with no-store.
-  GET `/api/incidents/{incident_id}/media` lists linked evidence for operators only.
-  Tracking and dashboard use those endpoints and temporary browser blob previews.
-- Upload UUIDs survive same-file retries while the page is open. Report persistence
-  happens first; failed media never rolls back a text report. The UI shows its real
-  tracking ID and can retry the unchanged report/file without duplicating metadata.
-- Storage and PostgreSQL cannot share a transaction. On uncertain metadata failure
-  the private object is retained so retries can reconcile it. An abandoned upload
-  may leave an orphan; no scheduled orphan cleaner/retention policy is implemented.
-  Inspect objects against report_media through trusted tooling before deleting any.
-- Two concurrent media jobs per backend process; busy requests return 429 with
-  Retry-After. This is a resource bound, not distributed per-user rate limiting.
+1. Use an existing compatible Supabase base schema: the ten tables, department seeds, RLS policies and citizen-only Auth profile trigger. The repository does not supply a complete base bootstrap.
+2. Inspect schema/RPC state. For the pre-department base, apply current department_portal.sql once as owner. An already migrated environment must not rerun it.
+3. For an older department installation missing the release wrapper, apply only department_assignment_release.sql. The latest full migration already includes it.
+4. Do not apply historical stage4_operations.sql after the current migration.
+5. Verify service_role-only RPC grants, browser profile-write denial, citizen signup and active membership restrictions. See [SQL guide](../backend/sql/README.md).
+6. Provision/verify private storage with python -m backend.tools.prepare_storage from the repository root. It refuses an existing public bucket.
+7. Provision Operator/Admin/Department accounts through trusted profile updates, never signup metadata.
 
-For another environment run from the repository root:
-`python -m backend.tools.prepare_storage`.
-The script creates/updates only this private bucket, not database schema/RLS.
-It refuses to proceed if the existing bucket is public. Do not add broad anon or
- authenticated storage.objects policies; browser Storage access is unnecessary.
-Inspect Supabase Storage/RLS advisors before public activation. Live citizen
-object-list/download checks confirmed direct access is currently denied.
+There is no migration ledger or SQL connection in the repository proving live application state; check the destination before changes.
 
-## Citizen accounts
+## Environment placement
 
-Login retains the existing design with citizen signup and forgot-password modes.
-Signup sends email/password and a confirmation redirect only, never role metadata.
-The existing trusted trigger creates CITIZEN; there is no public promotion path.
-FastAPI still verifies tokens and loads profiles.role for authorization.
+| Location | Variable | Purpose |
+| --- | --- | --- |
+| Backend only | SUPABASE_URL | Supabase project HTTPS URL |
+| Backend only | SUPABASE_SECRET_KEY | Server secret; never Vercel/client code |
+| Backend only | GROQ_API_KEY | Groq credential |
+| Backend only | LLM_MODEL | Available model compatible with the implemented structured-output path |
+| Backend only | APP_ENV | production on hosting; development locally |
+| Backend only | FRONTEND_ORIGINS | Exact trusted HTTPS frontend origins, comma-separated, no path/wildcard/trailing slash |
+| Railway | PORT | Hosting-provided port; Docker local default 8000 |
+| Frontend build | VITE_API_URL | FastAPI HTTPS origin, no /api suffix |
+| Frontend build | VITE_SUPABASE_URL | Public project URL |
+| Frontend build | VITE_SUPABASE_PUBLISHABLE_KEY | sb_publishable_ browser key |
+| Frontend build | VITE_MAPTILER_API_KEY | Browser raster-map key; restrict intended origins |
 
-Email confirmation: `/auth/callback`. Password recovery: `/auth/reset`.
-Supabase PKCE codes are exchanged once and removed from the address bar. Links
-must open in the browser that requested them. Invalid/expired links show a fixed
-safe error. New passwords require at least 12 characters and matching confirmation.
-Successful reset signs out and asks the user to sign in again. Reset-request copy
-never reveals whether an account exists. Provider errors are not printed.
+Production backend validates required variables and HTTPS origins, printing names rather than secret values. Startup always requires Supabase URL/secret. Development can persist pending intake without usable Groq.
 
-Enable email confirmation and configure a working SMTP provider in Supabase Auth
-before public use. Configure SMTP/rate limits/CAPTCHA as appropriate for real traffic;
-the application does not implement a separate distributed abuse-prevention service.
-Public signup/email delivery/reset completion require the browser checklist below.
+Production frontend builds require the three API/Auth variables. MapTiler key is not a build requirement: missing it renders a clear basemap fallback with no raster requests. Set all four for working maps.
 
-## Configuration
+VITE_ values are compiled into assets: rebuild/redeploy after changes. Restart backend after server environment changes. Vite rejects server-key variable names/non-publishable Auth keys; do not treat that as permission to store secrets elsewhere in frontend files.
 
-Frontend accepts only public environment variables:
+CORS explicitly allows localhost:5173 and 127.0.0.1:5173 plus configured origins. allow_credentials=false; bearer auth does not require wildcard credentialed CORS. Enumerate trusted preview origins rather than broad wildcards.
 
-| Variable | Value |
-| --- | --- |
-| VITE_API_URL | Actual Railway HTTPS API origin, without /api suffix |
-| VITE_SUPABASE_URL | Actual Supabase project URL |
-| VITE_SUPABASE_PUBLISHABLE_KEY | sb_publishable_ key only |
-| VITE_MAPTILER_API_KEY | Browser MapTiler Cloud key for Streets raster tiles; restrict allowed origins |
+## Railway backend
 
-Production builds require all three. There are no hardcoded production URLs.
-Frontend .env.example lists the correct supported variables. Vite rejects server-key
-variable names and non-publishable Auth keys. Restart Vite after local env changes.
+1. Connect the repository; keep service root at repository root, not backend/.
+2. railway.json selects backend/Dockerfile with root build context.
+3. Docker installs Python 3.12 requirements and FFmpeg, copies backend, and runs as a non-root user. .dockerignore excludes environment files, virtual environments, tests, Git and frontend.
+4. Configure backend variables through Railway's environment editor; set APP_ENV=production.
+5. Docker start command:
+   `uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log --limit-concurrency 32 --timeout-keep-alive 5`.
+6. Health check /health, timeout 60 seconds; restart ON_FAILURE up to three retries. Health is liveness, not an Auth/database/Groq/Storage probe.
+7. Configure the final Vercel/custom HTTPS origin in FRONTEND_ORIGINS. Restart after changes.
+8. Validate image execution, memory under image/audio load, quotas and edge/request controls before broader traffic. Media has two processing slots per process; multi-process deployment does not create distributed limits.
 
-Backend:
+Equivalent local image build, when Docker is available:
 
-| Variable | Value |
-| --- | --- |
-| APP_ENV | production on Railway; development locally |
-| SUPABASE_URL | Supabase project HTTPS URL |
-| SUPABASE_SECRET_KEY | Server secret, Railway backend service only |
-| GROQ_API_KEY | Server Groq key, Railway backend service only |
-| LLM_MODEL | Verified available structured-output Groq model |
-| FRONTEND_ORIGINS | Exact production frontend HTTPS origin(s), comma-separated; no paths/trailing slash/wildcard |
-| PORT | Provided by Railway; default 8000 only for local container |
+```sh
+docker build -f backend/Dockerfile -t civicops-backend .
+```
 
-Production startup fails safely for missing configuration or invalid HTTPS origins,
-reporting variable names rather than values. Local localhost:5173/127.0.0.1:5173 CORS
-remains supported. Credentials are false; Bearer auth needs no credentialed wildcard.
-Do not put backend secrets in Vercel, frontend variables, files or build arguments.
-Docker context excludes all .env files, virtual environments, git and frontend data.
+## Vercel frontend
 
-## Dependency review
+1. Import repository; Root Directory frontend.
+2. Framework Vite; Node.js 24.x.
+3. Install npm ci; build npm run build; output dist.
+4. Set all four frontend variables for Production and intended Preview environments.
+5. frontend/vercel.json supplies SPA rewrites and nosniff/no-referrer/frame-denial headers. Deep links must refresh correctly.
+6. In MapTiler Cloud restrict the browser key to intended local/hosted origins, then verify tile requests in the deployed browser under the actual headers. The repository alone cannot prove a restricted key works.
+7. Redeploy after changing any VITE_ variable.
 
-Vite 5.4.21 is the latest Vite 5 patch; patched releases for the current Vite
-advisories start at later major lines. No major-version upgrade was performed.
-The remaining findings concern Vite development-server file disclosure/path handling,
-Windows launch-editor handling and esbuild development-server cross-origin access.
-Their code is build/development tooling, not bundled into the deployed static client.
-The production-only npm audit reports zero vulnerabilities.
+Shared raster URL:
 
-These remain accepted only for isolated loopback hackathon development. Vite and
-preview explicitly bind 127.0.0.1; do not use --host to expose them, and do not run
-Vite/preview as a production server. An esbuild-only override would not resolve the
-Vite findings and could violate Vite's tested dependency range. Before exposing dev
-tooling or maintaining the project beyond the hackathon, plan a reviewed Vite upgrade.
+```text
+https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key=<encoded-browser-key>
+```
 
-Official advisory references:
-- https://github.com/vitejs/vite/security/advisories/GHSA-fx2h-pf6j-xcff
-- https://github.com/vitejs/vite/security/advisories/GHSA-4w7w-66w2-5vf9
-- https://github.com/vitejs/vite/security/advisories/GHSA-v6wh-96g9-6wx3
-- https://github.com/evanw/esbuild/security/advisories/GHSA-67mh-4wv8-2f99
+Leaflet uses 256px XYZ tiles, zoomOffset 0, minZoom 1, crossOrigin true. Attribution includes MapTiler and OpenStreetMap contributors. Direct public OSM raster tiles are not the current provider.
 
-The frontend still has the build's large-chunk advisory. It is not a failed build.
-Backend pinned dependencies and Docker base/FFmpeg should be scanned in the intended
-hosting pipeline before internet exposure; no image vulnerability scan was performed.
+## Supabase Auth redirects and email
 
-## Exact Railway setup (after approval)
+Set Site URL to the actual frontend origin. Add exact redirects:
 
-1. Connect this repository to a Railway backend service. Keep repository root `/`;
-   do not set its root directory to backend. `railway.json` uses `backend/Dockerfile`.
-2. Docker build installs Python 3.12 dependencies and FFmpeg, copies only the backend,
-   and runs as a non-root user. Equivalent build command from repository root:
-   `docker build -f backend/Dockerfile -t civicops-backend .`.
-3. Set backend variables from the table using Railway's secret/environment editor.
-   Never paste values into repository files. Set APP_ENV=production.
-4. Start command supplied by the Dockerfile:
-   `uvicorn backend.main:app --host 0.0.0.0 --port $PORT --no-access-log --limit-concurrency 32 --timeout-keep-alive 5`.
-   Railway supplies PORT. The shell expands it; no reload/dev mode.
-5. Generate the backend HTTPS domain when deployment is approved. Health check is
-   `/health`, timeout 60 seconds. This checks running application startup, not every
-   cloud dependency; run a real report/auth/storage smoke check separately.
-6. Set FRONTEND_ORIGINS to the exact final Vercel HTTPS origin. If multiple preview
-   environments are needed, enumerate trusted origins explicitly; never use `*`.
-7. Size Railway memory for image decoding/FFmpeg and the two simultaneous upload jobs.
-   Start with at least 1 GiB and measure usage. Configure spend/storage quotas and
-   edge/request rate limits before broad public traffic. Do not increase worker count
-   without reviewing per-process resource limits.
+```text
+https://YOUR_FRONTEND/auth/callback
+https://YOUR_FRONTEND/auth/reset
+http://127.0.0.1:5173/auth/callback
+http://127.0.0.1:5173/auth/reset
+http://localhost:5173/auth/callback
+http://localhost:5173/auth/reset
+```
 
-## Exact Vercel setup (after approval)
+Use one origin/browser consistently for PKCE links. Enable confirmation and configure working email delivery/SMTP, provider rate limits and abuse controls before public use. Signup has no role metadata and the trusted trigger creates CITIZEN. Password reset uses generic account-existence copy, 12-character minimum, matching confirmation and signout after success. Provider configuration/email delivery are separate manual checks.
 
-1. Import the same repository and set Root Directory to `frontend`.
-2. Framework: Vite; Node.js: 24.x. Install: `npm ci`; Build: `npm run build`;
-   Output Directory: `dist`. frontend/vercel.json supplies SPA rewrites/security headers.
-3. Configure the four public frontend variables above. VITE_API_URL is the
-   backend HTTPS domain; it does not point directly to Supabase protected tables.
-   Set VITE_MAPTILER_API_KEY under Project Settings > Environment Variables for
-   Production and any Preview environments you use. In MapTiler Cloud, authorize
-   the actual Vercel/custom-domain origins (and localhost for development).
-   Redeploy after changing the variable: Vite embeds it at build time. Without it,
-   the map displays a configuration message and makes no raster tile requests.
-   Both dashboards use the shared Leaflet map with the documented 256px Streets
-   raster URL: https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key=<key>.
-   See https://docs.maptiler.com/leaflet/examples/raster-tiles-in-leaflet-js/.
-4. Supabase Dashboard > Authentication > URL Configuration: set Site URL to the
-   actual final frontend HTTPS origin. Add exact redirect URLs:
-   `<frontend origin>/auth/callback` and `<frontend origin>/auth/reset`.
-   For local checks also add `http://localhost:5173/auth/callback`,
-   `http://localhost:5173/auth/reset`, `http://127.0.0.1:5173/auth/callback`,
-   `http://127.0.0.1:5173/auth/reset`. Use one origin consistently for PKCE.
-5. Check email confirmation/SMTP and trusted operator provisioning. Keep promotion
-   outside public signup. Apply the existing Stage 4 RPC script if this is a new
-   Supabase environment, then provision the private evidence bucket.
-6. After approval deploy the backend/frontend and run the checklist below against
-   final URLs. Deep-link /track and auth callbacks must survive a browser refresh.
+## Private evidence
 
-Official hosting references:
-https://docs.railway.com/guides/fastapi
-https://vercel.com/docs/frameworks/frontend/vite
+Bucket report-evidence must remain private. Server uploads normalize JPEG/PNG/WebP <=10 MiB, single frame <=12 million pixels to JPEG without source metadata. Supported audio <=15 MiB, <=5 minutes, one audio-only stream normalizes to mono WebM/Opus using FFmpeg/ffprobe.
 
-## Manual local browser acceptance checklist
+Bucket allows normalized image/jpeg and audio/webm with 15 MiB object limit. report_media stores private paths/hashes, not public URLs. FastAPI checks owner upload and owner/Operator/Admin/assigned-Department reads. No broad browser storage.objects policies are needed.
 
-Browser automation could not initialize because the runtime reports missing
-`sandboxPolicy` metadata. No browser success is claimed. Run locally:
-backend: `backend/.venv/Scripts/python.exe -m uvicorn backend.main:app --reload`
-frontend (in frontend/): `npm ci`, then `npm run dev`.
-Use http://127.0.0.1:5173 consistently and configure its two Auth redirect URLs.
-Use disposable citizen/operator accounts, never share passwords or access tokens.
+Two concurrent processing jobs per process return 429/Retry-After when busy. This is a resource limit, not per-user/distributed rate limiting. Report persistence happens before media; failed upload retains the text report. Uncertain metadata failures retain objects for retry reconciliation; abandoned objects need trusted manual review. No scheduled retention/orphan cleaner is installed.
 
-1. Create citizen account; confirm email in the same browser. Verify its profile
-   remains CITIZEN. An attempted signup metadata role must not change that role.
-2. Login, refresh the page to restore the session, logout and login again. Citizen
-   operator-dashboard access must be denied. Invalid credentials show safe errors.
-3. Request password reset. Verify generic confirmation, receive link, set matching
-   12+ character password, then sign in with the new password. Test an expired link.
-4. Submit signed-in text/location report with JPEG/PNG/WebP evidence. Track the real
-   returned ID and view its stored image after refresh. Repeat with recorded WebM
-   voice and a WAV/MP3/M4A file (supported codecs); view/play actual saved evidence.
-5. Try wrong MIME/extension, corrupt files, >10 MiB images, >15 MiB audio, video and
-   >5-minute audio. They must fail without losing the stored text report. Retry an
-   unchanged upload after a connection interruption; metadata must not duplicate.
-6. Sign out: anonymous text-only report still submits. Its local media previews
-   must not be represented as uploaded. Another citizen cannot access owned evidence.
-7. Sign in with a trusted operator account. Check dashboard/filter/map/details and
-   actual linked evidence. Assign department, modify/save plan, separately approve it.
-8. Progress RECEIVED -> VERIFIED -> ASSIGNED -> IN_PROGRESS -> RESOLVED. Invalid jumps
-   must fail; IN_PROGRESS needs approval. Assignment/history/audits must persist.
-9. As report owner, refresh tracking and verify actual timeline without private notes.
-   Submit YES/PARTIALLY/NO once; duplicates/unrelated feedback must fail. NO must not
-   automatically reopen the incident.
-10. Verify backend-unavailable and upload errors, text-only operation, refresh/deep
-    links and both desktop/mobile layout. Repeat after final production configuration.
+## Dependencies and readiness limits
 
-No deployment has been attempted. Browser/email checks, hosting image execution,
-production configuration and abuse/retention policy review remain acceptance items.
+The checked-in lockfile/build uses Vite 5.4.21. Historical Stage 5 review accepted Vite/esbuild development-server advisories only for isolated loopback hackathon tooling and recorded a clean production-only npm audit at that time. Those are historical results, not a current security guarantee or a claim that no newer advisory exists.
+
+Recheck at release time:
+
+```powershell
+npm audit
+npm audit --omit=dev
+```
+
+Do not expose Vite/preview as production servers. A reviewed tooling upgrade, dependency/container scan and public-traffic abuse/retention policies remain release work. Build currently warns about a large frontend chunk; it is not a build failure. No image vulnerability scan or deployment certification is implied.
+
+## Acceptance before presentation/public release
+
+Run [test commands and the full role-aware browser demo](TESTING.md). Verify signup/reset delivery, auth identity switching, manual/GPS locations, private image/audio, map tiles, Operator review/release, Department work, final Operator verification and feedback. Test stale conflicts and reassignment revocation.
+
+Browser automation was unavailable in earlier implementation checks because of runtime sandboxPolicy initialization failure. Recorded live in-process checks do not establish browser acceptance. Hosting status, actual origin/key restrictions, SQL grants and cloud configuration must be verified in the destination environment.

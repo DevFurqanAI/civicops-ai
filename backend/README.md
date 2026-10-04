@@ -1,153 +1,65 @@
-# CivicOps AI backend: Stages 1 and 2
+# CivicOps AI backend
 
-Run from the repository root with Python 3.12:
+FastAPI/Pydantic with server-only Supabase persistence, Groq intake, conservative fusion, trusted role authorization, transactional operations and private evidence.
+
+## Setup and execution
+
+From repository root, Python 3.12:
 
 ```powershell
-backend/.venv/Scripts/python.exe -m uvicorn backend.main:app
-backend/.venv/Scripts/python.exe -m pytest backend/tests -q
+py -3.12 -m venv backend/.venv
+backend/.venv/Scripts/Activate.ps1
+python -m pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload
 ```
 
-The server loads backend/.env without overriding existing environment variables.
-Provide SUPABASE_URL and SUPABASE_SECRET_KEY server-side. Missing configuration
-fails startup with variable names only. Never put secrets in Vite variables,
-browser code, logs, or source control.
+Copy .env.example to backend/.env only if absent. database.py loads that file without overriding hosting/process variables. SUPABASE_URL and SUPABASE_SECRET_KEY are required at startup. GROQ_API_KEY and LLM_MODEL enable intake; missing/unavailable AI remains pending in development. APP_ENV=production requires them plus FRONTEND_ORIGINS and validates HTTPS configuration. Never log/expose secrets.
 
-## Reports and idempotency
+FFmpeg and ffprobe on PATH are required for audio. Pillow handles images. See [deployment configuration](../docs/DEPLOYMENT_READINESS.md).
 
-POST /api/reports and GET /api/reports/{public_id} keep existing field names.
-internal_id is the report UUID. Public identifiers use CV- plus random hexadecimal
-characters. Idempotency is scoped to PUBLIC; Idempotency-Key overrides the request
-submission_id as the durable key. The response retains the original request ID.
-Matching retries return HTTP 201 with idempotent_replay=true; conflicting payloads
-return 409. A private _intake_request_v1 JSONB supporting signal stores the original
-submission ID and payload fingerprint, and is filtered out of API evidence.
+## Modules
 
-AI failures remain PENDING/AI_PENDING. Invalid or unstated reported urgency is NULL
-in the database; recognized claims normalize to LOW/MEDIUM/HIGH/CRITICAL. The legacy
-response still uses Medium when no claim is recorded. Report processing_status is
-separate from incident operational status. Pending/rejected/non-civic/archived
-reports do not enter fusion. Successful civic reports become LINKED after incident
-aggregation and audits succeed.
+- main.py: lifespan client and router/CORS registration; /health is liveness only.
+- auth.py: Supabase token verification, fresh trusted profile and explicit role/assignment checks.
+- models/: API bodies, responses and category/department/status enums.
+- routes/: reports, incidents, department, dashboard, auth, feedback and media.
+- repositories/: Supabase queries, uniqueness/retry handling, CAS and RPC dispatch.
+- services/: structured extraction, adapters, fusion, rules, lifecycle policy and evidence validation.
+- sql/: current transactional functions and historical migration definitions.
+- tools/prepare_storage.py: explicit private-bucket setup.
+- tests/: deterministic SDK transport/Auth/Storage doubles and opt-in real-service verifiers.
 
-Stage 2 adds nullable incident_id to report responses. Report status and priority
-reflect the linked persistent incident when present; report evidence and spam
-fields remain report-level. Historical Stage 1 reports are linked on POST retry,
-not bulk migrated. No background AI retry or reconciliation worker is installed.
+Compatibility helpers remain in services/supabase_client.py and utils/helpers.py; they do not own persistence. services/audit_service.py is a legacy logging helper, not the persistent operational audit path.
 
-## Conservative fusion
+## Persistence and intake
 
-Candidates have the same category, are unarchived and operationally active, and
-originated within 24 hours before the incoming report. Resolved/rejected incidents
-are never automatically reopened. Every comparison anchors to the seed report,
-preventing location drift through a chain of matches.
+Report/incident/link/idempotency state lives in PostgreSQL, not process dictionaries. Report retries use PUBLIC or USER:<verified UUID> scope and database uniqueness; changed payload reuse returns 409.
 
-The algorithm is token-set Jaccard similarity, a Haversine distance calculation,
-and timestamp comparison. It uses original text, AI summary when both exist, and
-landmark text; the smaller original/summary similarity controls content matching.
-It is not semantic matching, media analysis, or independent-source validation.
+Groq validates extraction categories/schema for English, Urdu and Roman Urdu. Failure leaves PENDING/AI_PENDING and no incident. Report processing is separate from incident status. Manual landmark/GPS values persist independently; blank landmark becomes null, and no-location submissions remain valid.
 
-With both coordinate pairs present, matching requires distance <=40 metres,
-landmark similarity >=0.85, content similarity >=0.75, and a weighted score >=0.85.
-Weights: content 0.35, landmark 0.30, distance 0.25, time 0.10.
-Without both coordinate pairs, an exact specific landmark with >=3 tokens is
-required, along with content similarity >=0.90, time <=6 hours and score >=0.94.
-Weights: content 0.60, landmark 0.30, time 0.10. Missing location evidence is never
-invented. A shared specific site marker (e.g. named school/gate/house/pole) is
-required; a road or area name alone is insufficient. At least four report-text
-tokens are required; OTHER and spam risk >=0.5 never auto-match. If the two best
-eligible candidates differ by less than 0.08, create a new incident.
+Fusion uses same-category lexical/landmark/distance/time agreement anchored to the seed report. It never merges on category/road name alone and does not claim embeddings/media corroboration. Count derives from links; aggregation preserves operational fields. Fusion writes have stable IDs/replay repair/CAS, not one transaction.
 
-incident_reports records score, method, and numeric decision details. The seed
-link uses NEW_INCIDENT_V1 and no match score because no existing match was made.
-Matched links use TOKEN_SIMILARITY_DISTANCE_TIME_V1. One report has at most one
-incident, enforced by the existing database unique constraint.
+Priority and trust scores are basic deterministic heuristics; plans are template suggestions. Uploaded media does not trigger AI analysis or automatic score updates. Exact thresholds and limitations are in [architecture](../docs/ARCHITECTURE.md).
 
-## Persistent incident intelligence and reads
+## Operational security
 
-GET /api/incidents remains a bare array. GET /api/incidents/{incident_id} accepts
-a UUID or incident_code; legacy report public IDs resolve through the link table.
-incident_id now identifies the incident UUID. Additive fields: incident_code and
-response_plan_status. Location field names and department code strings remain.
-Departments resolve from the live departments.department_key seed rows; water
-supply routes to WATER_SUPPLY. REOPENED is supported. INSPECTION is not a status.
+Operator/Admin routes and Department routes use separate allowlists. Department access requires current active membership, current department, an active assignment and a released work state. Assign & Release uses one transactional RPC. Department accepts/starts/submits completion; only Operator/Admin can finalize resolution or reopen.
 
-Report count is derived from links; it is not an incident-table column. Evidence
-and spam use the largest reported heuristic score, with no boost for report count.
-Priority keeps the higher of existing incident priority and rules-derived linked
-report priorities. Public supporting signals are deduplicated and include an honest
-linked-submission count. Initial summary/location are retained. Fusion never
-changes an existing operational status, department, or response-plan approval.
-Response plans remain PENDING suggestions; no dispatch action is performed.
+Current status/assignment/plan/feedback/work-update RPCs atomically write their operational state and audit/history. UI passes expected_updated_at; stale writes return 409. Private Operator notes are a single audit insert without incident CAS. Read-safe history omits notes/actor IDs.
 
-Dashboard totals now use persistent incidents; total_active excludes resolved and
-rejected incidents. The existing summary field names remain.
+Owner-only media uploads validate content and normalize to private JPEG/WebM objects. Authorized reads return protected bytes. Storage/metadata retries reconcile retained objects; no orphan cleaner exists. Two processing slots per process bound media work; this is not a general rate limiter.
 
-## Auditability, recovery and limits
+## References and checks
 
-SYSTEM audit rows record INCIDENT_CREATED, AUTOMATIC_MATCH_DECISION and REPORT_LINKED.
-Initial RECEIVED status history is recorded. Audit details contain IDs and numeric
-match evidence, not report text, auth data, or private fingerprint metadata.
+- [API models/routes](../docs/API_CONTRACT.md)
+- [Canonical roles/lifecycle/database](../docs/ARCHITECTURE.md)
+- [SQL applicability and grants](sql/README.md)
+- [Department provisioning/workflow](../docs/DEPARTMENT_PORTAL.md)
+- [Testing and manual acceptance](../docs/TESTING.md)
 
-No schema changes or new RPCs were applied. Several PostgREST writes cannot form
-one transaction with the existing API. Stable UUIDs make creation, links, audit
-rows and initial history repeatable. Unique link failures recover the existing
-winner. Audit/link/aggregation failures return a sanitized 503; retrying the same
-report completes missing work. Aggregation uses updated_at compare-and-swap with
-bounded retries. Report processing becomes LINKED last. A hard failure can leave
-an unlinked seed incident pending retry. Two simultaneous different reports can
-create separate incidents before either sees the other's link. A retry worker or
-transactional database function is future work; no exactly-once transaction claim
-is made. Read joins currently trade efficiency for simplicity (multiple queries).
+```powershell
+backend/.venv/Scripts/python.exe -m pytest backend/tests -q
+git diff --check
+```
 
-The old unauthenticated status/assignment POST endpoints return 501 rather than
-perform privileged operational changes. Persistent operator workflows, assignment
-history, authorization and authenticated human approvals are deferred. Read access
-control remains deferred too. Frontend integration and deployment are not included.
-
-Tests use the installed Supabase SDK with a deterministic disk-backed test
-transport. They include fresh-process reads, match/nonmatch/location/time cases,
-unique linking, audit replay, partial failure repair and stale aggregate rejection.
-Optional live Groq tests require explicit opt-in.
-
-
-## Stage 4: authentication and atomic operations
-
-Use Supabase Auth in the browser with publishable credentials only. FastAPI checks
-Bearer tokens with Supabase Auth get_user(token) and loads the trusted profiles
-role per request. GET /api/auth/me replaces the removed hardcoded /auth/login.
-OPERATOR/ADMIN are required for all incident reads, dashboard summaries and
-operator actions. CITIZEN cannot mutate incidents, regardless of JWT metadata.
-
-Authenticated report submissions persist reporter_id and use a per-user retry
-scope; anonymous submissions retain PUBLIC scope. Owned reports require their
-owner or an operator. Safe tracking history is available at
-GET /api/reports/{public_id}/tracking and omits notes and changed_by.
-
-Private POST /api/incidents/{id}/notes is enabled and persists one audit_logs row.
-Status, department assignment, response-plan review and resolution feedback now
-call the four applied transaction RPCs documented in [sql/README.md](sql/README.md).
-History and audit writes commit atomically with their operations. Incident responses
-include additive updated_at; mutation requests accept expected_updated_at for
-stale-edit protection. Status transitions are centralized and mirrored in SQL.
-IN_PROGRESS requires human plan approval. Feedback requires a citizen-owned report
-linked to a resolved incident; NO/PARTIALLY flag review without reopening it.
-
-FRONTEND_ORIGINS may add explicit comma-separated trusted frontend origins.
-Defaults include http://localhost:5173 and http://127.0.0.1:5173. Wildcard origins
-and credentialed CORS are not enabled. Existing signup-trigger/RLS role protections
-remain unchanged. Account creation/password reset/admin promotion UI are deferred.
-
-
-## Stage 5: private evidence and production configuration
-
-Private owner uploads and owner/operator evidence reads now use FastAPI and the
-private report-evidence Storage bucket. Image/audio content is validated and
-normalized before storage; report_media stores paths/hashes rather than public URLs.
-Local audio support requires ffmpeg and ffprobe on PATH. Railway's Dockerfile
-installs them. Anonymous text-only reporting remains available.
-
-APP_ENV=production enables required-key/model/origin validation. See
-[deployment readiness](../DEPLOYMENT_READINESS.md) for exact Railway/Vercel commands,
-environment variables, Auth redirects, limitations and manual browser acceptance.
-[Stage 5 changes](STAGE5_CHANGES.md) lists all files and verification results.
-The earlier Stage 4 account/media deferrals above are superseded by Stage 5.
+No background AI retry, fusion repair worker, automatic reopening or dispatch is installed. The repository does not include a complete base-schema bootstrap.

@@ -1,43 +1,33 @@
-# CivicOps visual system
+# CivicOps AI visual system
 
-Light product interface for citizen services and daily operational review. Keep
-existing Tailwind/React/Lucide dependencies and real service contracts.
+This guide describes the implemented interface, not a new redesign. Styles live in frontend/src/index.css; legacy App.css starter styles are not imported by App.
 
-## Colors
+## Identity
 
-Canvas #f3f6f8, surface #ffffff, ink #15364a, body #344f61, muted #587080,
-line #d6e1e7. Primary teal #146b68, hover #0f5351, selected #e9f4f2.
-Semantic red is critical/error, amber is warning/high priority, green is resolved
-or successfully completed. Text labels carry meaning alongside color.
-Primary body/muted/placeholder/button/state contrast pairs meet WCAG AA.
+Canvas #f3f6f8, surface #ffffff, ink #15364a, body #344f61, muted #587080 and line #d6e1e7. Primary teal #146b68, hover #0f5351, selected #e9f4f2. Red indicates critical/error, amber warnings/high priority and green success/resolved. Labels retain meaning beyond color.
 
-## Typography and shape
+System/Segoe UI typography, 15px body; desktop citizen heading 40px with responsive sizing, compact operational heading. Shared 12px panels, compact controls/status tags and 160ms color transitions. Reduced-motion handling, visible focus and skip navigation are implemented; this is not a full accessibility certification.
 
-Native Segoe UI/system sans, 15px base. Main service heading 40px desktop/32px
-mobile; compact operations heading 30px. Product labels and controls 13-15px.
-12px panels, 8px controls, compact 5px status tags. No decorative shadows or
-hero gradients. 160ms color transitions; reduced-motion override.
+## Layouts
 
-## Composition
+- Citizen: responsive report/guidance desktop columns, stacked mobile. Description, optional landmark/GPS, optional photo/voice, submit. No primary category selector. Language selector visible; Urdu form RTL. Written location/GPS confirmations are independent.
+- Operator: compact summary strip; queue and intelligence panel. Filtered shared map supports queue; detail includes plan review, work history and completion verification.
+- Department: trusted department/account header, five queue-derived summaries, prominent shared map, combined local filters/search, incident queue and detail/actions.
+- Tracking: actual current status, written location, private evidence/eligible feedback and safe recorded history.
+- Accounts: consistent existing signup/login/reset style.
 
-Citizen: full-width introduction, roughly 60/40 report/guidance desktop split,
-single-column mobile, description/location/evidence in that order. Language
-selection is visible in the form header; Urdu form direction is RTL.
-Operations: compact summary strip, queue and intelligence columns. Queue remains
-visible while reviewing details. Map is a short supporting panel below queue.
-Rows show priority/title/summary/category/report count/location/status/department
-and actual update time. Active/all scope is a local view filter only.
-Tracking: overview/evidence/eligible feedback beside actual status-history panel.
+## Shared map behavior
 
-## Truthfulness and accessibility
+IncidentMap uses Leaflet/React Leaflet and MapTiler Streets-v4 raster tiles, with MapTiler/OpenStreetMap attribution. One map per dashboard, stable tile source, selected-marker emphasis, informative popups and queue/map synchronization.
 
-AI summary and response-plan recommendation are distinguished from current human
-operational decisions. Render supporting signal details as supplied. Matching
-rationale and location confidence are not currently exposed by the incident API;
-do not fabricate them. Timestamp labels explicitly say Updated.
-Use native buttons, associated labels, visible focus, skip links, semantic headings,
-ARIA feedback and deliberate empty states. Auth/media/operational handlers and API
-field contracts are unchanged. Full auxiliary-copy translation remains incomplete.
+Department map contains all authorized queue rows; its local list filters do not expand access or remove markers. Operator map follows its filtered queue. Missing key displays configuration fallback. Invalid/null coordinates omit markers and preserve location text/details. Empty mapped datasets and hidden/resized containers are handled without an unnecessary filter-triggered remount.
 
-Browser automation is blocked by missing sandboxPolicy runtime metadata; desktop,
-mobile, keyboard and Urdu-layout visual acceptance still require a local browser.
+## Intelligence and human decisions
+
+Separate AI summary and template recommendations from Operator review/approval and Department execution. Display confidence/spam separately; do not imply corroboration. Supporting signals are rendered as supplied. Full matching details, location confidence and assigned time are not exposed by current incident contracts; time labels mean Updated.
+
+Plan approval state is visible. Department pending verification clearly awaits Operator review and has no final-resolution control. Allowed actions come from backend responses. Truthful loading, error, busy, conflict and empty states preserve the working API/security contract.
+
+## Acceptance limits
+
+Verify desktop/tablet/mobile, keyboard navigation, long labels, Urdu input/layout, tiles/selection and all role-specific empty/error states in a real browser. Complete helper-copy translation and independent accessibility/browser acceptance are not established by static component tests. See [testing](TESTING.md).
